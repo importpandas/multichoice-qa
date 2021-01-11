@@ -24,9 +24,9 @@ def process_text(inputs, remove_space=True, lower=False):
 
 # Preprocessing the datasets.
 def prepare_features(examples, tokenizer=None, data_args=None):
-    contexts = examples['article']
+    dialogues = examples['dialogue']
     answers = examples['answer']
-    options = examples['options']
+    options = examples['choice']
     questions = examples['question']
 
     labels = []
@@ -34,13 +34,17 @@ def prepare_features(examples, tokenizer=None, data_args=None):
     processed_contexts = []
 
     for i in range(len(answers)):
-        label = ord(answers[i]) - ord("A")
+        label = options[i].index(answers[i])
         labels.append(label)
-        processed_contexts.append([process_text(contexts[i])] * 4)
+        dialogue = dialogues[i]
+        context = ""
+        for d in dialogue:
+            context += d
+        processed_contexts.append([process_text(context)] * 3)
 
         question = process_text(questions[i])
         qa_pairs = []
-        for j in range(4):
+        for j in range(3):
             option = process_text(options[i][j])
 
             if "_" in question:
@@ -60,7 +64,7 @@ def prepare_features(examples, tokenizer=None, data_args=None):
         max_length=data_args.max_seq_length,
         padding="max_length" if data_args.pad_to_max_length else False,
     )
-    tokenized_examples = {k: [v[i: i + 4] for i in range(0, len(v), 4)] for k, v in tokenized_examples.items()}
+    tokenized_examples = {k: [v[i: i + 3] for i in range(0, len(v), 3)] for k, v in tokenized_examples.items()}
 
     tokenized_examples['label'] = labels
 

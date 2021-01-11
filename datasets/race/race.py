@@ -25,7 +25,7 @@ The dataset can be served as the training and test sets for machine comprehensio
 
 """
 
-_URL = "http://www.cs.cmu.edu/~glai1/data/race/RACE.tar.gz"
+_URL = "http:// www.cs.cmu.edu/~glai1/data/race/RACE.tar.gz"
 
 
 class Race(datasets.GeneratorBasedBuilder):

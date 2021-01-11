@@ -5,6 +5,7 @@ import os
 import torch
 import functools
 
+
 def get_oneNode_addr():
     try:
         nodelist = os.environ['SLURM_STEP_NODELIST']
@@ -15,6 +16,7 @@ def get_oneNode_addr():
     if('' in text):
         text.remove('')
     return text[0] + '-' + text[1] + '-' + text[2]
+
 
 def dist_init(host_addr, rank, local_rank, world_size, port=23456):
     host_addr_full = 'tcp://' + host_addr + ':' + str(port)
@@ -29,6 +31,7 @@ def dist_init(host_addr, rank, local_rank, world_size, port=23456):
     torch.cuda.set_device(local_rank)
     assert torch.distributed.is_initialized()
 
+
 def stats(output, label):
     if output.size(0) != 0:
         maxval, prediction = output.max(len(output.size()) - 1)
@@ -37,6 +40,7 @@ def stats(output, label):
     else:
         num_matches, num_utts = 0, 0
     return num_matches, num_utts
+
 
 def gather_output(inputs, world_size):
     group = torch.distributed.new_group(list(range(world_size)))
@@ -56,6 +60,7 @@ def gather_output(inputs, world_size):
     else:
         xprint(f'distributed gather inputs type error')
         return None
+
 
 #modified print function name
 def modified_print(*args, local_rank=-1 ,**kargs):
