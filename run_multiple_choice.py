@@ -274,7 +274,7 @@ def main():
         if data_args.dataload_file is not None:
             if data_args.data_type == 'dream' and data_args.dataload_type != 'plain_text':
                 raise ValueError("When using the 'dream' dataset, the 'dataload_type' parameter should be plain_text.")
-            if data_args.data_type == 'race' and data_args not in ['middle', 'high', 'all']:
+            if data_args.data_type == 'race' and data_args.dataload_type not in ['middle', 'high', 'all']:
                 raise ValueError("When using the 'race' dataset, the 'dataload_type' parameter should be chosen from "
                                  "'middle', 'high' or 'all'.")
             datasets = load_dataset(data_args.dataload_file, data_args.dataload_type)
