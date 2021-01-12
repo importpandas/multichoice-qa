@@ -104,10 +104,12 @@ class Dream(datasets.GeneratorBasedBuilder):
             downloaded_files = {
                 "train": self.config.data_files["train"],
                 "dev": self.config.data_files["validation"],
+                "test": self.config.data_files["test"],
             }
             return [
                 datasets.SplitGenerator(name=datasets.Split.TRAIN, gen_kwargs={"filepath": downloaded_files["train"]}),
                 datasets.SplitGenerator(name=datasets.Split.VALIDATION, gen_kwargs={"filepath": downloaded_files["dev"]}),
+                datasets.SplitGenerator(name=datasets.Split.TEST, gen_kwargs={"filepath": downloaded_files["test"]})
             ]
 
     def _generate_examples(self, filepath):

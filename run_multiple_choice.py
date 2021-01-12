@@ -83,6 +83,10 @@ class DataTrainingArguments:
         default=None,
         metadata={"help": "An optional input evaluation data file to evaluate the perplexity on (a text file)."},
     )
+    test_file: Optional[str] = field(
+        default=None,
+        metadata={"help": "An optional input test data file"}
+    )
     dataset: str = field(
         default='race',
         metadata={"help": "name of the used dataset, race or dream. Default: race."}
@@ -263,6 +267,8 @@ def main():
             data_files["train"] = data_args.train_file
         if data_args.validation_file is not None:
             data_files["validation"] = data_args.validation_file
+        if data_args.test_file is not None:
+            data_files["test"] = data_args.test_file
 
         if data_args.dataload_script is not None:
             datasets = load_dataset(data_args.dataload_script, data_files=data_files)
