@@ -37,9 +37,7 @@ def prepare_features(examples, tokenizer=None, data_args=None):
         label = options[i].index(answers[i])
         labels.append(label)
         dialogue = dialogues[i]
-        context = ""
-        for d in dialogue:
-            context += d
+        context = '\n'.join(dialogue)
         processed_contexts.append([process_text(context)] * 3)
 
         question = process_text(questions[i])
@@ -67,6 +65,5 @@ def prepare_features(examples, tokenizer=None, data_args=None):
     tokenized_examples = {k: [v[i: i + 3] for i in range(0, len(v), 3)] for k, v in tokenized_examples.items()}
 
     tokenized_examples['label'] = labels
-
     # Un-flatten
     return tokenized_examples
