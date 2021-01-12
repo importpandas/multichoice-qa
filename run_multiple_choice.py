@@ -42,7 +42,7 @@ from transformers import (
 from transformers.tokenization_utils_base import PaddingStrategy, PreTrainedTokenizerBase
 from transformers.trainer_utils import is_main_process
 
-from utils_race import prepare_features
+
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +82,26 @@ class DataTrainingArguments:
     validation_file: Optional[str] = field(
         default=None,
         metadata={"help": "An optional input evaluation data file to evaluate the perplexity on (a text file)."},
+    )
+    test_file: Optional[str] = field(
+        default=None,
+        metadata={"help": "An optional input test data file"}
+    )
+    dataset: str = field(
+        default='race',
+        metadata={"help": "name of the used dataset, race or dream. Default: race."}
+    )
+    dataload_script: Optional[str] = field(
+        default=None,
+        metadata={"help": "path to the dataset processing script with the dataset builder. Can be either:a local path "
+                          "to processing script or the directory containing the script (if the script has the same "
+                          "name as the directory),e.g. ``'./dataset/squad'`` or ``'./dataset/squad/squad.py'"}
+    )
+    dataload_split: Optional[str] = field(
+        default=None,
+        metadata={"help": "the type (or say 'category') needs to be loaded. For 'race' dataset, it can be chosen from "
+                          "'middle', 'high' or 'all'. For 'dream' dataset, it should be 'plain_text'. May be more "
+                          "dataset will be included."}
     )
     overwrite_cache: bool = field(
         default=False, metadata={"help": "Overwrite the cached training and evaluation sets"}
@@ -231,6 +251,14 @@ def main():
     # For CSV/JSON files, this script will use the column called 'text' or the first column if no column called
     # 'text' is found. You can easily tweak this behavior (see below).
 
+    if data_args.dataset not in ['race', 'dream']:
+        raise ValueError("Dataset should be race or dream.")
+    else:
+        if data_args.dataset == 'race':
+            from utils_race import prepare_features
+        if data_args.dataset == 'dream':
+            from utils_dream import prepare_features
+
     # In distributed training, the load_dataset function guarantee that only one local process can concurrently
     # download the dataset.
     if data_args.train_file is not None or data_args.validation_file is not None:
@@ -239,11 +267,18 @@ def main():
             data_files["train"] = data_args.train_file
         if data_args.validation_file is not None:
             data_files["validation"] = data_args.validation_file
-        extension = data_args.train_file.split(".")[-1]
-        datasets = load_dataset(extension, data_files=data_files)
+        if data_args.test_file is not None:
+            data_files["test"] = data_args.test_file
+
+        if data_args.dataload_script is not None:
+            datasets = load_dataset(data_args.dataload_script, data_files=data_files)
+        else:
+            extension = data_args.train_file.split(".")[-1]
+            datasets = load_dataset(extension, data_files=data_files)
     else:
-        # Downloading and loading the race dataset from the hub.
-        datasets = load_dataset("./datasets/race", "all")
+        # Downloading and loading the dream dataset from the hub.
+        if data_args.dataload_script is not None:
+            datasets = load_dataset(data_args.dataload_script, data_args.dataload_split)
     # See more about loading any type of standard or custom dataset (from files, python dict, pandas DataFrame, etc) at
     # https://huggingface.co/docs/datasets/loading_datasets.html.
 
@@ -268,13 +303,10 @@ def main():
         cache_dir=model_args.cache_dir,
     )
 
-
     if training_args.do_train:
         column_names = datasets["train"].column_names
     else:
         column_names = datasets["validation"].column_names
-
-
 
     pprepare_features = partial(prepare_features, tokenizer=tokenizer, data_args=data_args)
     tokenized_datasets = datasets.map(
@@ -284,7 +316,6 @@ def main():
         remove_columns=column_names,
         load_from_cache_file=not data_args.overwrite_cache,
     )
-
 
     # Data collator
     data_collator = (
