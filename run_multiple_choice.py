@@ -272,11 +272,6 @@ def main():
     else:
         # Downloading and loading the dream dataset from the hub.
         if data_args.dataload_script is not None:
-            if data_args.dataset == 'dream' and data_args.dataload_split != 'plain_text':
-                raise ValueError("When using the 'dream' dataset, the 'dataload_split' parameter should be plain_text.")
-            if data_args.dataset == 'race' and data_args.dataload_split not in ['middle', 'high', 'all']:
-                raise ValueError("When using the 'race' dataset, the 'dataload_split' parameter should be chosen from "
-                                 "'middle', 'high' or 'all'.")
             datasets = load_dataset(data_args.dataload_script, data_args.dataload_split)
     # See more about loading any type of standard or custom dataset (from files, python dict, pandas DataFrame, etc) at
     # https://huggingface.co/docs/datasets/loading_datasets.html.
