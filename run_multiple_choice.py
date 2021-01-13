@@ -484,6 +484,7 @@ def main():
                 if trainer.is_world_process_zero():
                     with open(output_test_file, "w") as writer:
                         logger.info("***** Test results *****")
+                        logger.info("***** splits: "+str(splits)+" *****")
                         for key, value in sorted(results.items()):
                             logger.info(f"  {key} = {value}")
                             writer.write(f"{key} = {value}\n")
