@@ -91,6 +91,7 @@ class DataTrainingArguments:
         default=None,
         metadata={"help": "An optional input test data file"}
     )
+    data_dir: Optional[str] = field(default=None, metadata={"help": "the local path of input data"})
     dataset: str = field(
         default='race',
         metadata={"help": "name of the used dataset, race or dream. Default: race."}
@@ -270,7 +271,7 @@ def main():
 
     # In distributed training, the load_dataset function guarantee that only one local process can concurrently
     # download the dataset.
-    if data_args.train_file is not None or data_args.validation_file is not None:
+    if data_args.train_file is not None or data_args.validation_file is not None or data_args.test_file is not None:
         data_files = {}
         if data_args.train_file is not None:
             data_files["train"] = data_args.train_file
@@ -284,10 +285,17 @@ def main():
         else:
             extension = data_args.train_file.split(".")[-1]
             datasets = load_dataset(extension, data_args.dataload_split, data_files=data_files)
+    elif data_args.data_dir is not None:
+        if data_args.dataload_script is not None:
+            datasets = load_dataset(data_args.dataload_script, data_args.dataload_split, data_dir=data_args.data_dir)
+        else:
+            raise ValueError("Namespace has no attribute dataload_script")
     else:
         # Downloading and loading the dream dataset from the hub.
         if data_args.dataload_script is not None:
             datasets = load_dataset(data_args.dataload_script, data_args.dataload_split)
+        else:
+            raise ValueError("Namespace has no attribute dataload_script")
     # See more about loading any type of standard or custom dataset (from files, python dict, pandas DataFrame, etc) at
     # https://huggingface.co/docs/datasets/loading_datasets.html.
 
