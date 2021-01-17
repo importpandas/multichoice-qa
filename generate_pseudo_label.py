@@ -25,6 +25,13 @@ from typing import Optional, Union
 
 import numpy as np
 import torch
+import torch.nn.functional as F
+from torch.utils.data.dataloader import DataLoader
+from torch.utils.data.dataset import Dataset
+from torch.utils.data.distributed import DistributedSampler
+from torch.utils.data.sampler import RandomSampler, SequentialSampler
+import tqdm
+
 from datasets import load_dataset
 from functools import partial
 
@@ -111,7 +118,7 @@ class DataTrainingArguments:
         metadata={"help": "The number of processes to use for the preprocessing."},
     )
     max_qa_length: int = field(
-        default=64,
+        default=128,
         metadata={
             "help":     "The maximum total input sequence length after WordPiece tokenization. "
                         "Sequences longer than this will be truncated, and sequences shorter "
@@ -144,9 +151,9 @@ class DataTrainingArguments:
 
 
 @dataclass
-class DataCollatorForMultipleChoice:
+class DataCollatorForGeneratingEvidenceLabel:
     """
-    Data collator that will dynamically pad the inputs for multiple choice received.
+    Data collator that will dynamically pad the inputs.
 
     Args:
         tokenizer (:class:`~transformers.PreTrainedTokenizer` or :class:`~transformers.PreTrainedTokenizerFast`):
@@ -176,12 +183,10 @@ class DataCollatorForMultipleChoice:
     pad_to_multiple_of: Optional[int] = None
 
     def __call__(self, features):
-        label_name = "label" if "label" in features[0].keys() else "labels"
-        labels = [feature.pop(label_name) for feature in features]
         batch_size = len(features)
         num_choices = len(features[0]["input_ids"])
         flattened_features = [
-            [{k: v[i] for k, v in feature.items()} for i in range(num_choices)] for feature in features
+            [{k: v[i] for k, v in feature.items() if k not in ["example_ids", "sent_start_token"]} for i in range(num_choices)] for feature in features
         ]
         flattened_features = sum(flattened_features, [])
 
@@ -195,8 +200,9 @@ class DataCollatorForMultipleChoice:
 
         # Un-flatten
         batch = {k: v.view(batch_size, num_choices, -1) for k, v in batch.items()}
+        batch['example_ids'] = [feature['example_ids'] for feature in features]
+        batch['sent_start_token'] = [feature['sent_start_token'] for feature in features]
         # Add back labels
-        batch["labels"] = torch.tensor(labels, dtype=torch.int64)
         return batch
 
 
@@ -213,16 +219,6 @@ def main():
     else:
         model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
-    if (
-        os.path.exists(training_args.output_dir)
-        and os.listdir(training_args.output_dir)
-        and training_args.do_train
-        and not training_args.overwrite_output_dir
-    ):
-        raise ValueError(
-            f"Output directory ({training_args.output_dir}) already exists and is not empty."
-            "Use --overwrite_output_dir to overcome."
-        )
 
     # Setup logging
     logging.basicConfig(
@@ -255,7 +251,7 @@ def main():
         raise ValueError("Dataset should be race or dream.")
     else:
         if data_args.dataset == 'race':
-            from utils_race import prepare_features
+            from utils_race import prepare_features_for_pseudo_label
         if data_args.dataset == 'dream':
             from utils_dream import prepare_features
 
@@ -303,14 +299,12 @@ def main():
         cache_dir=model_args.cache_dir,
     )
 
-    if training_args.do_train:
-        column_names = datasets["train"].column_names
-    else:
-        column_names = datasets["validation"].column_names
+    column_names = datasets["train"].column_names
 
-    pprepare_features = partial(prepare_features, tokenizer=tokenizer, data_args=data_args)
+
+    pprepare_features_for_pseudo_label = partial(prepare_features_for_pseudo_label, tokenizer=tokenizer, data_args=data_args)
     tokenized_datasets = datasets.map(
-        pprepare_features,
+        pprepare_features_for_pseudo_label,
         batched=True,
         num_proc=data_args.preprocessing_num_workers,
         remove_columns=column_names,
@@ -319,60 +313,110 @@ def main():
 
     # Data collator
     data_collator = (
-        default_data_collator if data_args.pad_to_max_length else DataCollatorForMultipleChoice(tokenizer=tokenizer)
+        default_data_collator if data_args.pad_to_max_length else DataCollatorForGeneratingEvidenceLabel(tokenizer=tokenizer)
     )
 
-    # Metric
-    def compute_metrics(eval_predictions):
-        predictions, label_ids = eval_predictions
-        preds = np.argmax(predictions, axis=1)
-        return {"accuracy": (preds == label_ids).astype(np.float32).mean().item()}
+    device = training_args.device
+    model.to(device)
+    model.eval()
+    if training_args.n_gpu > 1 and not training_args.model_parallel:
+        model = torch.nn.DataParallel(model)
 
-    # Initialize our Trainer
-    trainer = Trainer(
-        model=model,
-        args=training_args,
-        train_dataset=tokenized_datasets["train"] if training_args.do_train else None,
-        eval_dataset=tokenized_datasets["validation"] if training_args.do_eval else None,
-        tokenizer=tokenizer,
-        data_collator=data_collator,
-        compute_metrics=compute_metrics,
-    )
-
-    # Training
-    if training_args.do_train:
-        train_result = trainer.train(
-            model_path=model_args.model_name_or_path if os.path.isdir(model_args.model_name_or_path) else None
+    pseudo_label = {}
+    for train_test_or_eval, dataset in tokenized_datasets.items():
+        dataloader = DataLoader(
+            dataset.select(range(20))                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              ,
+            batch_size=training_args.eval_batch_size,
+            sampler=SequentialSampler(dataset.select(range(20))),
+            collate_fn=data_collator,
+            num_workers=0
         )
-        trainer.save_model()  # Saves the tokenizer too for easy upload
 
-        output_train_file = os.path.join(training_args.output_dir, "train_results.txt")
-        if trainer.is_world_process_zero():
-            with open(output_train_file, "w") as writer:
-                logger.info("***** Train results *****")
-                for key, value in sorted(train_result.metrics.items()):
-                    logger.info(f"  {key} = {value}")
-                    writer.write(f"{key} = {value}\n")
+        pseudo_label_split = {}
+        for step, batch in tqdm.tqdm(enumerate(dataloader)):
+            print(step)
+            with torch.no_grad():
+                origin_inputs = {
+                    "input_ids": batch['input_ids'].to(device),
+                    "attention_mask": batch['attention_mask'].to(device),
+                    "token_type_ids": batch['token_type_ids'].to(device),
+                }
+                origin_logits = model(**origin_inputs).logits.detach().cpu()
 
-            # Need to save the state, since Trainer.save_model saves only the tokenizer with the model
-            trainer.state.save_to_json(os.path.join(training_args.output_dir, "trainer_state.json"))
+            example_ids = batch['example_ids']
+            sent_starts = batch['sent_start_token']
+            sep_pos = [[torch.where(batch['input_ids'][i][j] == 102)[0][0].item() for j in range(4)] for i in range(len(example_ids))]
 
-    # Evaluation
-    results = {}
-    if training_args.do_eval:
-        logger.info("*** Evaluate ***")
+            for i, one_example_sent_starts in enumerate(sent_starts):
 
-        results = trainer.evaluate()
+                pseudo_label_per_example = []
+                one_example_logit = origin_logits[i]
+                one_example_sent_starts = torch.tensor(one_example_sent_starts, device=device)
+                one_example_attention_mask = batch['attention_mask'][i]
+                one_example_input_ids = batch['input_ids'][i]
+                one_example_token_type_ids = batch['token_type_ids'][i]
+                sent_num = one_example_sent_starts.size()[1]
+                sent_bound = torch.cat((one_example_sent_starts, torch.tensor(sep_pos[i], device=device).unsqueeze(1)), dim=-1)
 
-        output_eval_file = os.path.join(training_args.output_dir, "eval_results_swag.txt")
-        if trainer.is_world_process_zero():
-            with open(output_eval_file, "w") as writer:
-                logger.info("***** Eval results *****")
-                for key, value in sorted(results.items()):
-                    logger.info(f"  {key} = {value}")
-                    writer.write(f"{key} = {value}\n")
+                for j in range(0, sent_num, training_args.eval_batch_size):
+                    batch_start = j
+                    batch_end = j + training_args.eval_batch_size if j < sent_num - training_args.eval_batch_size else sent_num
+                    batched_sent_bound = torch.stack((sent_bound[:, batch_start: batch_end + 1][:, :-1],
+                                         sent_bound[:, batch_start: batch_end + 1][:, 1:])).permute(2, 1, 0)
 
-    return results
+                    batched_attention_mask = one_example_attention_mask.unsqueeze(0).expand(batch_end - batch_start, -1,
+                                                                                            -1).clone()
+
+                    if_in_sent = torch.logical_and(batched_sent_bound[:,:,0].unsqueeze(-1) <= torch.arange(batched_attention_mask.size()[-1]).view(1, 1, -1),
+                                                   torch.arange(batched_attention_mask.size()[-1]).view(1, 1, -1) < batched_sent_bound[:,:,1].unsqueeze(-1))
+
+                    batched_attention_mask = torch.where(if_in_sent, torch.tensor((0), device=device), batched_attention_mask)
+                    batched_input_ids = one_example_input_ids.expand(batch_end - batch_start, -1, -1).contiguous()
+                    batched_token_type_ids = one_example_token_type_ids.expand(batch_end - batch_start, -1, -1).contiguous()
+
+                    with torch.no_grad():
+                        masked_inputs = {
+                            "input_ids": batched_input_ids.to(device),
+                            "attention_mask": batched_attention_mask.to(device),
+                            "token_type_ids": batched_token_type_ids.to(device),
+                        }
+                        masked_logits = model(**masked_inputs).logits.detach().cpu()
+                        kl_divs = torch.sum(F.kl_div(F.log_softmax(masked_logits, dim=-1), F.softmax(one_example_logit, dim=-1), reduction='none'), dim=-1)
+                    pseudo_label_per_example += kl_divs.detach().cpu().tolist()
+
+                pseudo_label_split[example_ids[i]] = pseudo_label_per_example
+
+        pseudo_label[train_test_or_eval] = pseudo_label_split
+
+    torch.save(pseudo_label, data_args.dataset + "_pseudo_label.pt")
+
+
+
+
+                    #for k, attention_mask in enumerate(batched_attention_mask):
+                    #    attention_mask =
+
+
+
+
+
+
+    # # Evaluation
+    # results = {}
+    # if training_args.do_eval:
+    #     logger.info("*** Evaluate ***")
+    #
+    #     results = trainer.evaluate()
+    #
+    #     output_eval_file = os.path.join(training_args.output_dir, "eval_results_swag.txt")
+    #     if trainer.is_world_process_zero():
+    #         with open(output_eval_file, "w") as writer:
+    #             logger.info("***** Eval results *****")
+    #             for key, value in sorted(results.items()):
+    #                 logger.info(f"  {key} = {value}")
+    #                 writer.write(f"{key} = {value}\n")
+    #
+    # return results
 
 
 def _mp_fn(index):
