@@ -319,22 +319,22 @@ def main():
     device = training_args.device
     model.to(device)
     model.eval()
-    if training_args.n_gpu > 1 and not training_args.model_parallel:
+    if training_args.n_gpu > 1:
         model = torch.nn.DataParallel(model)
 
     pseudo_label = {}
     for train_test_or_eval, dataset in tokenized_datasets.items():
         dataloader = DataLoader(
-            dataset.select(range(20))                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              ,
+            dataset,
             batch_size=training_args.eval_batch_size,
-            sampler=SequentialSampler(dataset.select(range(20))),
+            sampler=SequentialSampler(dataset),
             collate_fn=data_collator,
             num_workers=0
         )
 
         pseudo_label_split = {}
+        print(f'{train_test_or_eval}', len(dataloader))
         for step, batch in tqdm.tqdm(enumerate(dataloader)):
-            print(step)
             with torch.no_grad():
                 origin_inputs = {
                     "input_ids": batch['input_ids'].to(device),
@@ -345,7 +345,8 @@ def main():
 
             example_ids = batch['example_ids']
             sent_starts = batch['sent_start_token']
-            sep_pos = [[torch.where(batch['input_ids'][i][j] == 102)[0][0].item() for j in range(4)] for i in range(len(example_ids))]
+            sep_pos = [[torch.where(batch['input_ids'][i][j] == tokenizer.sep_token_id)[0][0].item() 
+                                                for j in range(4)] for i in range(len(example_ids))]
 
             for i, one_example_sent_starts in enumerate(sent_starts):
 
@@ -365,10 +366,11 @@ def main():
                                          sent_bound[:, batch_start: batch_end + 1][:, 1:])).permute(2, 1, 0)
 
                     batched_attention_mask = one_example_attention_mask.unsqueeze(0).expand(batch_end - batch_start, -1,
-                                                                                            -1).clone()
+                                                                                            -1).clone().to(device)
 
-                    if_in_sent = torch.logical_and(batched_sent_bound[:,:,0].unsqueeze(-1) <= torch.arange(batched_attention_mask.size()[-1]).view(1, 1, -1),
-                                                   torch.arange(batched_attention_mask.size()[-1]).view(1, 1, -1) < batched_sent_bound[:,:,1].unsqueeze(-1))
+                    pos_matrix = torch.arange(batched_attention_mask.size()[-1], device=device).view(1, 1, -1)
+                    if_in_sent = torch.logical_and(batched_sent_bound[:,:,0].unsqueeze(-1) <= pos_matrix,
+                                                   pos_matrix < batched_sent_bound[:,:,1].unsqueeze(-1))
 
                     batched_attention_mask = torch.where(if_in_sent, torch.tensor((0), device=device), batched_attention_mask)
                     batched_input_ids = one_example_input_ids.expand(batch_end - batch_start, -1, -1).contiguous()
