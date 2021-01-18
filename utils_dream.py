@@ -1,25 +1,4 @@
-import six
-import unicodedata
-
-
-def process_text(inputs, remove_space=True, lower=False):
-    """preprocess data by removing extra space and normalize data."""
-    outputs = inputs
-    if remove_space:
-        outputs = " ".join(inputs.strip().split())
-
-    if six.PY2 and isinstance(outputs, str):
-        try:
-            outputs = six.ensure_text(outputs, "utf-8")
-        except UnicodeDecodeError:
-            outputs = six.ensure_text(outputs, "latin-1")
-
-    outputs = unicodedata.normalize("NFKD", outputs)
-    outputs = "".join([c for c in outputs if not unicodedata.combining(c)])
-    if lower:
-        outputs = outputs.lower()
-
-    return outputs
+from utils_race import process_text
 
 
 # Preprocessing the datasets.

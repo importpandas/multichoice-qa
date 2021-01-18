@@ -121,7 +121,7 @@ class DataTrainingArguments:
         metadata={"help": "The number of processes to use for the preprocessing."},
     )
     max_qa_length: int = field(
-        default=128,
+        default=64,
         metadata={
             "help":     "The maximum total input sequence length after WordPiece tokenization. "
                         "Sequences longer than this will be truncated, and sequences shorter "
