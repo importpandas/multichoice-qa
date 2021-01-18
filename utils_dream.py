@@ -1,5 +1,3 @@
-import six
-import unicodedata
 from utils_race import process_text
 
 

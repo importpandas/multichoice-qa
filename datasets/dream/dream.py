@@ -93,7 +93,7 @@ class Dream(datasets.GeneratorBasedBuilder):
     def _split_generators(self, dl_manager):
         """Returns SplitGenerators."""
         # local path of the dataset  ⭐⭐ important ⭐⭐
-        if self.config.data_files is None:
+        if self.config.data_files["train"] is None:
             downloaded_files = dl_manager.download_and_extract(_URLS)
             return [
                 datasets.SplitGenerator(name=datasets.Split.TRAIN, gen_kwargs={"filepath": downloaded_files["train"]}),
