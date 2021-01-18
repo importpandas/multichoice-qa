@@ -42,14 +42,8 @@ from transformers import (
 from transformers.tokenization_utils_base import PaddingStrategy, PreTrainedTokenizerBase
 from transformers.trainer_utils import is_main_process
 
-
-
 logger = logging.getLogger(__name__)
 
-dataset_splits = {
-    "race": ['middle', 'high', 'all'],
-    "dream": ['plain_text'],
-}
 
 @dataclass
 class ModelArguments:
@@ -108,10 +102,9 @@ class DataTrainingArguments:
                           "'middle', 'high' or 'all'. For 'dream' dataset, it should be 'plain_text'. May be more "
                           "dataset will be included."}
     )
-    eval_all_split: Optional[bool] = field(
-        default=False,
-        metadata={"help": "True means evaluation on all splits if have, False means using the split specified in the "
-                          "'dataload_split' arguments. Default: False"}
+    eval_dataset: Optional[str] = field(
+        default="all",
+        metadata={"help": "the eval dataset,'dev', 'test' or 'all' (means both 'dev' and 'test'). default: all"}
     )
     overwrite_cache: bool = field(
         default=False, metadata={"help": "Overwrite the cached training and evaluation sets"}
@@ -271,33 +264,14 @@ def main():
 
     # In distributed training, the load_dataset function guarantee that only one local process can concurrently
     # download the dataset.
-    if data_args.train_file is not None or data_args.validation_file is not None or data_args.test_file is not None:
-        data_files = {}
-        if data_args.train_file is not None:
-            data_files["train"] = data_args.train_file
-        if data_args.validation_file is not None:
-            data_files["validation"] = data_args.validation_file
-        if data_args.test_file is not None:
-            data_files["test"] = data_args.test_file
-
-        if data_args.dataload_script is not None:
-            datasets = load_dataset(data_args.dataload_script, data_args.dataload_split, data_files=data_files)
-        else:
-            extension = data_args.train_file.split(".")[-1]
-            datasets = load_dataset(extension, data_args.dataload_split, data_files=data_files)
-    elif data_args.data_dir is not None:
-        if data_args.dataload_script is not None:
-            datasets = load_dataset(data_args.dataload_script, data_args.dataload_split, data_dir=data_args.data_dir)
-        else:
-            raise ValueError("Namespace has no attribute dataload_script")
-    else:
-        # Downloading and loading the dream dataset from the hub.
-        if data_args.dataload_script is not None:
-            datasets = load_dataset(data_args.dataload_script, data_args.dataload_split)
-        else:
-            raise ValueError("Namespace has no attribute dataload_script")
     # See more about loading any type of standard or custom dataset (from files, python dict, pandas DataFrame, etc) at
     # https://huggingface.co/docs/datasets/loading_datasets.html.
+    data_files = {"train": data_args.train_file,
+                  "validation": data_args.validation_file,
+                  "test": data_args.test_file}
+
+    datasets = load_dataset(data_args.dataload_script, data_args.dataload_split, data_files=data_files,
+                            data_dir=data_args.data_dir)
 
     # Load pretrained model and tokenizer
 
@@ -380,124 +354,32 @@ def main():
     # --load_best_model_at_end \
     # --metric_for_best_model accuracy \
     # --evaluation_strategy steps \
-    results = {}
-    if training_args.do_eval:
+    eval_on_dev = (data_args.eval_dataset == "all" or data_args.eval_dataset == "dev") and training_args.do_eval
+    eval_on_test = (data_args.eval_dataset == "all" or data_args.eval_dataset == "test") and training_args.do_eval
+
+    if eval_on_dev:
         logger.info("*** Evaluate ***")
-        if not data_args.eval_all_split:
-            results = trainer.evaluate()
+        results = trainer.evaluate(eval_dataset=tokenized_datasets["validation"])
 
-            output_eval_file = os.path.join(training_args.output_dir, "eval_results.txt")
-            if trainer.is_world_process_zero():
-                with open(output_eval_file, "w") as writer:
-                    logger.info("***** Eval results *****")
-                    for key, value in sorted(results.items()):
-                        logger.info(f"  {key} = {value}")
-                        writer.write(f"{key} = {value}\n")
-        else:
-            dataset_split = dataset_splits[data_args.dataset]
-            for splits in dataset_split:
-                if data_args.validation_file is not None:
-                    data_files = {"validation": data_args.validation_file}
-
-                    if data_args.dataload_script is not None:
-                        datasets = load_dataset(data_args.dataload_script, splits, data_files=data_files)
-                    else:
-                        extension = data_args.validation_file.split(".")[-1]
-                        datasets = load_dataset(extension, splits, data_files=data_files)
-                else:
-                    # Downloading and loading the dream dataset from the hub.
-                    if data_args.dataload_script is not None:
-                        datasets = load_dataset(data_args.dataload_script, splits)
-
-                pprepare_features = partial(prepare_features, tokenizer=tokenizer, data_args=data_args)
-                tokenized_datasets = datasets.map(
-                    pprepare_features,
-                    batched=True,
-                    num_proc=data_args.preprocessing_num_workers,
-                    remove_columns=column_names,
-                    load_from_cache_file=not data_args.overwrite_cache,
-                )
-
-                results = trainer.evaluate(eval_dataset=tokenized_datasets["validation"])
-
-                output_eval_file = os.path.join(training_args.output_dir, str(splits)+"_"+"eval_results.txt")
-                if trainer.is_world_process_zero():
-                    with open(output_eval_file, "w") as writer:
-                        logger.info("***** Eval results *****")
-                        for key, value in sorted(results.items()):
-                            logger.info(f"  {key} = {value}")
-                            writer.write(f"{key} = {value}\n")
-
-    if training_args.do_predict:
+        output_eval_file = os.path.join(training_args.output_dir, "eval_results.txt")
+        if trainer.is_world_process_zero():
+            with open(output_eval_file, "w") as writer:
+                logger.info("***** Eval results *****")
+                for key, value in sorted(results.items()):
+                    logger.info(f"  {key} = {value}")
+                    writer.write(f"{key} = {value}\n")
+    if eval_on_test:
         logger.info("*** Test ***")
-        if not data_args.eval_all_split:
-            if data_args.test_file is not None:
-                data_files = {"test": data_args.test_file}
 
-                if data_args.dataload_script is not None:
-                    datasets = load_dataset(data_args.dataload_script, data_args.dataload_split, data_files=data_files)
-                else:
-                    extension = data_args.test_file.split(".")[-1]
-                    datasets = load_dataset(extension, data_args.dataload_split, data_files=data_files)
-            else:
-                # Downloading and loading the dream dataset from the hub.
-                if data_args.dataload_script is not None:
-                    datasets = load_dataset(data_args.dataload_script, data_args.dataload_split)
-            pprepare_features = partial(prepare_features, tokenizer=tokenizer, data_args=data_args)
-            tokenized_datasets = datasets.map(
-                    pprepare_features,
-                    batched=True,
-                    num_proc=data_args.preprocessing_num_workers,
-                    remove_columns=column_names,
-                    load_from_cache_file=not data_args.overwrite_cache,
-            )
+        results = trainer.evaluate(eval_dataset=tokenized_datasets["test"])
 
-            results = trainer.evaluate(eval_dataset=tokenized_datasets["test"])
-
-            output_test_file = os.path.join(training_args.output_dir, "test_results.txt")
-            if trainer.is_world_process_zero():
-                with open(output_test_file, "w") as writer:
-                    logger.info("***** Test results *****")
-                    for key, value in sorted(results.items()):
-                        logger.info(f"  {key} = {value}")
-                        writer.write(f"{key} = {value}\n")
-        else:
-            dataset_split = dataset_splits[data_args.dataset]
-            for splits in dataset_split:
-                if data_args.test_file is not None:
-                    data_files = {"test": data_args.test_file}
-
-                    if data_args.dataload_script is not None:
-                        datasets = load_dataset(data_args.dataload_script, splits, data_files=data_files)
-                    else:
-                        extension = data_args.train_file.split(".")[-1]
-                        datasets = load_dataset(extension, splits, data_files=data_files)
-                else:
-                    # Downloading and loading the dream dataset from the hub.
-                    if data_args.dataload_script is not None:
-                        datasets = load_dataset(data_args.dataload_script, splits)
-
-                pprepare_features = partial(prepare_features, tokenizer=tokenizer, data_args=data_args)
-                tokenized_datasets = datasets.map(
-                    pprepare_features,
-                    batched=True,
-                    num_proc=data_args.preprocessing_num_workers,
-                    remove_columns=column_names,
-                    load_from_cache_file=not data_args.overwrite_cache,
-                )
-
-                results = trainer.evaluate(eval_dataset=tokenized_datasets["test"])
-
-                output_test_file = os.path.join(training_args.output_dir, str(splits)+"_"+"test_results.txt")
-                if trainer.is_world_process_zero():
-                    with open(output_test_file, "w") as writer:
-                        logger.info("***** Test results *****")
-                        logger.info("***** splits: "+str(splits)+" *****")
-                        for key, value in sorted(results.items()):
-                            logger.info(f"  {key} = {value}")
-                            writer.write(f"{key} = {value}\n")
-
-    return results
+        output_test_file = os.path.join(training_args.output_dir, "test_results.txt")
+        if trainer.is_world_process_zero():
+            with open(output_test_file, "w") as writer:
+                logger.info("***** Test results *****")
+                for key, value in sorted(results.items()):
+                    logger.info(f"  {key} = {value}")
+                    writer.write(f"{key} = {value}\n")
 
 
 def _mp_fn(index):
