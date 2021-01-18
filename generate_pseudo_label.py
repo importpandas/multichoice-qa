@@ -84,7 +84,11 @@ class DataTrainingArguments:
     """
     Arguments pertaining to what data we are going to input our model for training and eval.
     """
-
+    dataload_script: str = field(
+        metadata={"help": "path to the dataset processing script with the dataset builder. Can be either:a local path "
+                          "to processing script or the directory containing the script (if the script has the same "
+                          "name as the directory),e.g. ``'./dataset/squad'`` or ``'./dataset/squad/squad.py'"}
+    )
     train_file: Optional[str] = field(default=None, metadata={"help": "The input training data file (a text file)."})
     validation_file: Optional[str] = field(
         default=None,
@@ -94,21 +98,20 @@ class DataTrainingArguments:
         default=None,
         metadata={"help": "An optional input test data file"}
     )
+    data_dir: Optional[str] = field(default=None, metadata={"help": "the local path of input data"})
     dataset: str = field(
         default='race',
         metadata={"help": "name of the used dataset, race or dream. Default: race."}
-    )
-    dataload_script: Optional[str] = field(
-        default=None,
-        metadata={"help": "path to the dataset processing script with the dataset builder. Can be either:a local path "
-                          "to processing script or the directory containing the script (if the script has the same "
-                          "name as the directory),e.g. ``'./dataset/squad'`` or ``'./dataset/squad/squad.py'"}
     )
     dataload_split: Optional[str] = field(
         default=None,
         metadata={"help": "the type (or say 'category') needs to be loaded. For 'race' dataset, it can be chosen from "
                           "'middle', 'high' or 'all'. For 'dream' dataset, it should be 'plain_text'. May be more "
                           "dataset will be included."}
+    )
+    eval_dataset: Optional[str] = field(
+        default="all",
+        metadata={"help": "the eval dataset,'dev', 'test' or 'all' (means both 'dev' and 'test'). default: all"}
     )
     overwrite_cache: bool = field(
         default=False, metadata={"help": "Overwrite the cached training and evaluation sets"}
@@ -118,7 +121,7 @@ class DataTrainingArguments:
         metadata={"help": "The number of processes to use for the preprocessing."},
     )
     max_qa_length: int = field(
-        default=128,
+        default=64,
         metadata={
             "help":     "The maximum total input sequence length after WordPiece tokenization. "
                         "Sequences longer than this will be truncated, and sequences shorter "
@@ -257,24 +260,13 @@ def main():
 
     # In distributed training, the load_dataset function guarantee that only one local process can concurrently
     # download the dataset.
-    if data_args.train_file is not None or data_args.validation_file is not None:
-        data_files = {}
-        if data_args.train_file is not None:
-            data_files["train"] = data_args.train_file
-        if data_args.validation_file is not None:
-            data_files["validation"] = data_args.validation_file
-        if data_args.test_file is not None:
-            data_files["test"] = data_args.test_file
+    data_files = {}
+    data_files['train'] = data_args.train_file if data_args.train_file is not None else None
+    data_files['validation'] = data_args.validation_file if data_args.validation_file is not None else None
+    data_files['test'] = data_args.test_file if data_args.test_file is not None else None
 
-        if data_args.dataload_script is not None:
-            datasets = load_dataset(data_args.dataload_script, data_files=data_files)
-        else:
-            extension = data_args.train_file.split(".")[-1]
-            datasets = load_dataset(extension, data_files=data_files)
-    else:
-        # Downloading and loading the dream dataset from the hub.
-        if data_args.dataload_script is not None:
-            datasets = load_dataset(data_args.dataload_script, data_args.dataload_split)
+    datasets = load_dataset(data_args.dataload_script, data_args.dataload_split, data_files=data_files if data_files['train'] is not None else None,
+                            data_dir=data_args.data_dir)
     # See more about loading any type of standard or custom dataset (from files, python dict, pandas DataFrame, etc) at
     # https://huggingface.co/docs/datasets/loading_datasets.html.
 
