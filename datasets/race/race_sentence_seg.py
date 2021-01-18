@@ -4,9 +4,11 @@ from __future__ import absolute_import, division, print_function
 
 import json
 import os
+import spacy
 from pathlib import Path
 
 import datasets
+from utils_race import process_text
 
 
 _CITATION = """\
@@ -26,6 +28,7 @@ The dataset can be served as the training and test sets for machine comprehensio
 """
 
 _URL = "http://www.cs.cmu.edu/~glai1/data/race/RACE.tar.gz"
+nlp = spacy.load("en_core_web_sm")
 
 
 class Race(datasets.GeneratorBasedBuilder):
@@ -52,6 +55,7 @@ class Race(datasets.GeneratorBasedBuilder):
                 {
                     "example_id": datasets.Value("string"),
                     "article": datasets.Value("string"),
+                    "article_sent_start": datasets.Sequence(datasets.Value("int32")),
                     "answer": datasets.Value("string"),
                     "question": datasets.Value("string"),
                     "options": datasets.features.Sequence(datasets.Value("string"))
@@ -71,10 +75,7 @@ class Race(datasets.GeneratorBasedBuilder):
         """Returns SplitGenerators."""
         # Downloads the data and defines the splits
         # dl_manager is a datasets.download.DownloadManager that can be used to
-        if self.config.data_dir is None:
-            dl_dir = dl_manager.download_and_extract(_URL)
-        else:
-            dl_dir = self.config.data_dir
+        dl_dir = dl_manager.download_and_extract(_URL)
         case = str(self.config.name)
         if case == "all":
             case = ""
@@ -106,13 +107,17 @@ class Race(datasets.GeneratorBasedBuilder):
                 questions = data["questions"]
                 answers = data["answers"]
                 options = data["options"]
+                article = process_text(data["article"])
+                doc = nlp(article)
+                article_sent_start = [sent.start_char for sent in doc.sents]
                 for i in range(len(questions)):
                     question = questions[i]
                     answer = answers[i]
                     option = options[i]
                     yield i, {
                         "example_id": data["id"].replace(".txt", "_")+str(i),
-                        "article": data["article"],
+                        "article": article,
+                        "article_sent_start": article_sent_start,
                         "question": question,
                         "answer": answer,
                         "options": option,

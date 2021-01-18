@@ -153,4 +153,5 @@ cached*
 pretrained/
 submit_single.sh
 shell*/
-
+*.ipynb
+*.py.lock
