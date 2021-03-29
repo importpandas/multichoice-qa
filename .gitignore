@@ -155,3 +155,4 @@ submit_single.sh
 shell*/
 *.ipynb
 *.py.lock
+*.pt

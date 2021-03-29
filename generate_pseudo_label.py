@@ -254,7 +254,7 @@ def main():
         raise ValueError("Dataset should be race or dream.")
     else:
         if data_args.dataset == 'race':
-            from utils_race import prepare_features_for_pseudo_label
+            from utils_race import prepare_features_for_generate_pseudo_label
         if data_args.dataset == 'dream':
             from utils_dream import prepare_features
 
@@ -294,9 +294,9 @@ def main():
     column_names = datasets["train"].column_names
 
 
-    pprepare_features_for_pseudo_label = partial(prepare_features_for_pseudo_label, tokenizer=tokenizer, data_args=data_args)
+    pprepare_features_for_generate_pseudo_label = partial(prepare_features_for_generate_pseudo_label, tokenizer=tokenizer, data_args=data_args)
     tokenized_datasets = datasets.map(
-        pprepare_features_for_pseudo_label,
+        prepare_features_for_generate_pseudo_label,
         batched=True,
         num_proc=data_args.preprocessing_num_workers,
         remove_columns=column_names,
@@ -342,7 +342,7 @@ def main():
 
             for i, one_example_sent_starts in enumerate(sent_starts):
 
-                pseudo_label_per_example = []
+                kl_div_per_example = []
                 one_example_logit = origin_logits[i]
                 one_example_sent_starts = torch.tensor(one_example_sent_starts, device=device)
                 one_example_attention_mask = batch['attention_mask'][i]
@@ -376,41 +376,13 @@ def main():
                         }
                         masked_logits = model(**masked_inputs).logits.detach().cpu()
                         kl_divs = torch.sum(F.kl_div(F.log_softmax(masked_logits, dim=-1), F.softmax(one_example_logit, dim=-1), reduction='none'), dim=-1)
-                    pseudo_label_per_example += kl_divs.detach().cpu().tolist()
+                    kl_div_per_example += kl_divs.detach().cpu().tolist()
 
-                pseudo_label_split[example_ids[i]] = pseudo_label_per_example
+                pseudo_label_split[example_ids[i]] = kl_div_per_example
 
         pseudo_label[train_test_or_eval] = pseudo_label_split
 
     torch.save(pseudo_label, data_args.dataset + "_pseudo_label.pt")
-
-
-
-
-                    #for k, attention_mask in enumerate(batched_attention_mask):
-                    #    attention_mask =
-
-
-
-
-
-
-    # # Evaluation
-    # results = {}
-    # if training_args.do_eval:
-    #     logger.info("*** Evaluate ***")
-    #
-    #     results = trainer.evaluate()
-    #
-    #     output_eval_file = os.path.join(training_args.output_dir, "eval_results_swag.txt")
-    #     if trainer.is_world_process_zero():
-    #         with open(output_eval_file, "w") as writer:
-    #             logger.info("***** Eval results *****")
-    #             for key, value in sorted(results.items()):
-    #                 logger.info(f"  {key} = {value}")
-    #                 writer.write(f"{key} = {value}\n")
-    #
-    # return results
 
 
 def _mp_fn(index):

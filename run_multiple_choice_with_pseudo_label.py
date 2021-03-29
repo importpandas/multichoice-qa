@@ -247,7 +247,7 @@ def main():
     # Set seed before initializing model.
     set_seed(training_args.seed)
 
-    # Get the datasets: you can either provide your own CSV/JSON/TXT training and evaluation files (see below)
+    # Get the [datasets]: you can either provide your own CSV/JSON/TXT training and evaluation files (see below)
     # or just provide the name of one of the public datasets available on the hub at https://huggingface.co/datasets/
     # (the dataset will be downloaded automatically from the datasets Hub).
 
@@ -258,7 +258,7 @@ def main():
         raise ValueError("Dataset should be race or dream.")
     else:
         if data_args.dataset == 'race':
-            from utils_race import prepare_features
+            from utils_race import prepare_features_with_pseudo_label
         if data_args.dataset == 'dream':
             from utils_dream import prepare_features
 
@@ -300,19 +300,22 @@ def main():
     else:
         column_names = datasets["validation"].column_names
 
-    pprepare_features = partial(prepare_features, tokenizer=tokenizer, data_args=data_args)
+    pseudo_label = torch.load("race_pseudo_label_full.pt")
+    pseudo_label_merged = dict(pseudo_label['train'], **pseudo_label['test'])
+    pseudo_label_merged = dict(pseudo_label_merged, **pseudo_label['validation'])
+
+    pprepare_features_with_sentence_label = partial(prepare_features_with_pseudo_label, tokenizer=tokenizer, data_args=data_args, all_pseudo_label=pseudo_label_merged)
     tokenized_datasets = datasets.map(
-        pprepare_features,
+        pprepare_features_with_sentence_label,
         batched=True,
         num_proc=data_args.preprocessing_num_workers,
         remove_columns=column_names,
         load_from_cache_file=not data_args.overwrite_cache,
     )
 
+
     # Data collator
-    data_collator = (
-        default_data_collator if data_args.pad_to_max_length else DataCollatorForMultipleChoice(tokenizer=tokenizer)
-    )
+    data_collator = DataCollatorForMultipleChoice(tokenizer=tokenizer)
 
     # Metric
     def compute_metrics(eval_predictions):
@@ -331,7 +334,6 @@ def main():
         compute_metrics=compute_metrics,
     )
 
-    # Training
     if training_args.do_train:
         train_result = trainer.train(
             model_path=model_args.model_name_or_path if os.path.isdir(model_args.model_name_or_path) else None
