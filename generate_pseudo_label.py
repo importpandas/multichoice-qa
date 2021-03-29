@@ -296,7 +296,7 @@ def main():
 
     pprepare_features_for_generate_pseudo_label = partial(prepare_features_for_generate_pseudo_label, tokenizer=tokenizer, data_args=data_args)
     tokenized_datasets = datasets.map(
-        prepare_features_for_generate_pseudo_label,
+        pprepare_features_for_generate_pseudo_label,
         batched=True,
         num_proc=data_args.preprocessing_num_workers,
         remove_columns=column_names,
@@ -377,6 +377,9 @@ def main():
                         masked_logits = model(**masked_inputs).logits.detach().cpu()
                         kl_divs = torch.sum(F.kl_div(F.log_softmax(masked_logits, dim=-1), F.softmax(one_example_logit, dim=-1), reduction='none'), dim=-1)
                     kl_div_per_example += kl_divs.detach().cpu().tolist()
+                if example_ids[i] == 'high10001_0':
+                    print(example_ids[i], sent_num, len(kl_div_per_example))
+                assert len(kl_div_per_example) == sent_num
 
                 pseudo_label_split[example_ids[i]] = kl_div_per_example
 

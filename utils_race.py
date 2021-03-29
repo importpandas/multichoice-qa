@@ -59,6 +59,7 @@ def prepare_features(examples, tokenizer=None, data_args=None):
             else:
                 qa_cat = " ".join([question, option])
             qa_cat = " ".join(whitespace_tokenize(qa_cat)[- data_args.max_qa_length:])
+            qa_pairs.append(qa_cat)
         qa_list.append(qa_pairs)
 
     first_sentences = sum(processed_contexts, [])
@@ -145,8 +146,7 @@ def prepare_features_with_pseudo_label(examples, evidence_len=2, tokenizer=None,
     questions = examples['question']
     example_ids = examples['example_id']
     sent_starts = examples['article_sent_start']
-    evidence_sents = [torch.argsort(torch.tensor(all_pseudo_label[example_id]))[-1 * evidence_len:].tolist() for example_id in example_ids]
-    evidence_sents = torch.sort(torch.tensor(evidence_sents), dim=1)[0].tolist()
+    evidence_sents = [sorted(torch.argsort(torch.tensor(all_pseudo_label[example_id]))[-1 * evidence_len:].tolist()) for example_id in example_ids]
 
     qa_list = []
     labels = []
