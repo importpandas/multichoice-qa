@@ -146,7 +146,9 @@ def prepare_features_with_pseudo_label(examples, evidence_len=2, tokenizer=None,
     questions = examples['question']
     example_ids = examples['example_id']
     sent_starts = examples['article_sent_start']
-    evidence_sents = [sorted(torch.argsort(torch.tensor(all_pseudo_label[example_id]))[-1 * evidence_len:].tolist()) for example_id in example_ids]
+    min_evidence_num = min([len(all_pseudo_label[example_id]) for example_id in example_ids])
+    evidence_len = evidence_len if evidence_len <= min_evidence_num else min_evidence_num
+    evidence_sents = [sorted(torch.argsort(torch.tensor(all_pseudo_label[example_id]))[-evidence_len:].tolist()) for example_id in example_ids]
 
     qa_list = []
     labels = []

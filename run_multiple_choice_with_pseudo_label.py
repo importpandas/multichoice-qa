@@ -102,6 +102,12 @@ class DataTrainingArguments:
                           "'middle', 'high' or 'all'. For 'dream' dataset, it should be 'plain_text'. May be more "
                           "dataset will be included."}
     )
+    evidence_len: int = field(
+        default=2,
+        metadata={
+            "help":     "number of sentences of each evidence"
+        },
+    )
     eval_dataset: Optional[str] = field(
         default="all",
         metadata={"help": "the eval dataset,'dev', 'test' or 'all' (means both 'dev' and 'test'). default: all"}
@@ -304,7 +310,8 @@ def main():
     pseudo_label_merged = dict(pseudo_label['train'], **pseudo_label['test'])
     pseudo_label_merged = dict(pseudo_label_merged, **pseudo_label['validation'])
 
-    pprepare_features_with_sentence_label = partial(prepare_features_with_pseudo_label, tokenizer=tokenizer, data_args=data_args, all_pseudo_label=pseudo_label_merged)
+    pprepare_features_with_sentence_label = partial(prepare_features_with_pseudo_label, evidence_len=data_args.evidence_len,
+                                tokenizer=tokenizer, data_args=data_args, all_pseudo_label=pseudo_label_merged)
     tokenized_datasets = datasets.map(
         pprepare_features_with_sentence_label,
         batched=True,
