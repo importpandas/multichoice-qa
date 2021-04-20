@@ -1,6 +1,7 @@
 import six
 import unicodedata
 import torch
+import random
 import spacy
 
 
@@ -219,3 +220,65 @@ def prepare_features_for_using_pseudo_label_as_evidence(examples, evidence_len=2
 
     # Un-flatten
     return tokenized_examples
+
+def prepare_features_for_initializing_evidence_selctor(examples, evidence_len=2, tokenizer=None, data_args=None, all_pseudo_label: dict=None):
+    contexts = examples['article']
+    answers = examples['answer']
+    options = examples['options']
+    questions = examples['question']
+    example_ids = examples['example_id']
+    sent_starts = examples['article_sent_start']
+    min_evidence_num = min([len(all_pseudo_label[example_id]) for example_id in example_ids])
+    evidence_len = evidence_len if evidence_len <= min_evidence_num else min_evidence_num
+    evidence_sent_idxs = [sorted(torch.argsort(torch.tensor(all_pseudo_label[example_id]))[-evidence_len:].tolist()) for example_id in example_ids]
+
+    qa_list = []
+    labels = []
+    processed_contexts = []
+
+    for i in range(len(answers)):
+        full_context = contexts[i]
+
+        qa_concat = process_text(questions[i])
+        for j in range(4):
+            option = process_text(options[i][j])
+            qa_concat += "[SEP]"
+            qa_concat += option
+
+        per_example_evidence_sent_idxs = evidence_sent_idxs[i]
+        per_example_sent_starts = sent_starts[i]
+        per_example_sent_starts.append(len(full_context))
+
+        for evidence_sent_idx in per_example_evidence_sent_idxs:
+            sent_start = per_example_sent_starts[evidence_sent_idx]
+            sent_end = per_example_sent_starts[evidence_sent_idx + 1]
+            evidence_sent = full_context[sent_start: sent_end]
+            processed_contexts.append(evidence_sent)
+            qa_list.append(qa_concat)
+            labels.append(1)
+
+        all_irre_sent_idxs = list(filter(lambda x: x not in per_example_evidence_sent_idxs, list(range(len(per_example_sent_starts) - 1))))
+        for irre_sent_idx in random.sample(all_irre_sent_idxs, evidence_len):
+            sent_start = per_example_sent_starts[irre_sent_idx]
+            sent_end = per_example_sent_starts[irre_sent_idx + 1]
+            irre_sent = full_context[sent_start: sent_end]
+            processed_contexts.append(irre_sent)
+            qa_list.append(qa_concat)
+            labels.append(0)
+
+
+
+    tokenized_examples = tokenizer(
+        processed_contexts,
+        qa_list,
+        truncation="only_first",
+        max_length=data_args.max_seq_length,
+        padding="max_length" if data_args.pad_to_max_length else False,
+    )
+
+    tokenized_examples['label'] = labels
+
+    # Un-flatten
+    return tokenized_examples
+
+
