@@ -156,3 +156,4 @@ shell*/
 *.ipynb
 *.py.lock
 *.pt
+exp/

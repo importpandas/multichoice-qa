@@ -139,7 +139,7 @@ def prepare_features_for_generate_pseudo_label(examples, tokenizer=None, data_ar
     return tokenized_examples
 
 # Preprocessing the datasets.
-def prepare_features_with_pseudo_label(examples, evidence_len=2, tokenizer=None, data_args=None, all_pseudo_label: dict=None):
+def prepare_features_for_using_pseudo_label_as_evidence(examples, evidence_len=2, tokenizer=None, data_args=None, all_pseudo_label: dict=None):
     contexts = examples['article']
     answers = examples['answer']
     options = examples['options']

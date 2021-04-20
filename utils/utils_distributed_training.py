@@ -5,6 +5,8 @@ import os
 import torch
 import functools
 
+def is_main_process(local_rank):
+    return local_rank in [-1, 0]
 
 def get_oneNode_addr():
     try:

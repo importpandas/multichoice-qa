@@ -20,6 +20,7 @@ Fine-tuning the library models for multiple choice.
 import logging
 import os
 import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dataclasses import dataclass, field
 from typing import Optional, Union
 
@@ -36,11 +37,10 @@ from transformers import (
     HfArgumentParser,
     Trainer,
     TrainingArguments,
-    default_data_collator,
     set_seed,
 )
 from transformers.tokenization_utils_base import PaddingStrategy, PreTrainedTokenizerBase
-from transformers.trainer_utils import is_main_process
+from utils.utils_distributed_training import is_main_process
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +101,12 @@ class DataTrainingArguments:
         metadata={"help": "the type (or say 'category') needs to be loaded. For 'race' dataset, it can be chosen from "
                           "'middle', 'high' or 'all'. For 'dream' dataset, it should be 'plain_text'. May be more "
                           "dataset will be included."}
+    )
+    evidence_len: int = field(
+        default=2,
+        metadata={
+            "help":     "number of sentences of each evidence"
+        },
     )
     eval_dataset: Optional[str] = field(
         default="all",
@@ -247,7 +253,7 @@ def main():
     # Set seed before initializing model.
     set_seed(training_args.seed)
 
-    # Get the datasets: you can either provide your own CSV/JSON/TXT training and evaluation files (see below)
+    # Get the [datasets]: you can either provide your own CSV/JSON/TXT training and evaluation files (see below)
     # or just provide the name of one of the public datasets available on the hub at https://huggingface.co/datasets/
     # (the dataset will be downloaded automatically from the datasets Hub).
 
@@ -258,9 +264,9 @@ def main():
         raise ValueError("Dataset should be race or dream.")
     else:
         if data_args.dataset == 'race':
-            from utils_race import prepare_features
+            from utils.utils_race import prepare_features_for_using_pseudo_label_as_evidence
         if data_args.dataset == 'dream':
-            from utils_dream import prepare_features
+            pass
 
     # In distributed training, the load_dataset function guarantee that only one local process can concurrently
     # download the dataset.
@@ -300,19 +306,23 @@ def main():
     else:
         column_names = datasets["validation"].column_names
 
-    pprepare_features = partial(prepare_features, tokenizer=tokenizer, data_args=data_args)
+    pseudo_label = torch.load("race_pseudo_label_full.pt")
+    pseudo_label_merged = dict(pseudo_label['train'], **pseudo_label['test'])
+    pseudo_label_merged = dict(pseudo_label_merged, **pseudo_label['validation'])
+
+    pprepare_features_for_using_pseudo_label_as_evidence = partial(prepare_features_for_using_pseudo_label_as_evidence, evidence_len=data_args.evidence_len,
+                                tokenizer=tokenizer, data_args=data_args, all_pseudo_label=pseudo_label_merged)
     tokenized_datasets = datasets.map(
-        pprepare_features,
+        pprepare_features_for_using_pseudo_label_as_evidence,
         batched=True,
         num_proc=data_args.preprocessing_num_workers,
         remove_columns=column_names,
         load_from_cache_file=not data_args.overwrite_cache,
     )
 
+
     # Data collator
-    data_collator = (
-        default_data_collator if data_args.pad_to_max_length else DataCollatorForMultipleChoice(tokenizer=tokenizer)
-    )
+    data_collator = DataCollatorForMultipleChoice(tokenizer=tokenizer)
 
     # Metric
     def compute_metrics(eval_predictions):
@@ -331,7 +341,6 @@ def main():
         compute_metrics=compute_metrics,
     )
 
-    # Training
     if training_args.do_train:
         train_result = trainer.train(
             model_path=model_args.model_name_or_path if os.path.isdir(model_args.model_name_or_path) else None

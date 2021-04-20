@@ -20,16 +20,14 @@ Fine-tuning the library models for multiple choice.
 import logging
 import os
 import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dataclasses import dataclass, field
 from typing import Optional, Union
 
-import numpy as np
 import torch
 import torch.nn.functional as F
 from torch.utils.data.dataloader import DataLoader
-from torch.utils.data.dataset import Dataset
-from torch.utils.data.distributed import DistributedSampler
-from torch.utils.data.sampler import RandomSampler, SequentialSampler
+from torch.utils.data.sampler import SequentialSampler
 import tqdm
 
 from datasets import load_dataset
@@ -41,13 +39,12 @@ from transformers import (
     AutoModelForMultipleChoice,
     AutoTokenizer,
     HfArgumentParser,
-    Trainer,
     TrainingArguments,
     default_data_collator,
     set_seed,
 )
 from transformers.tokenization_utils_base import PaddingStrategy, PreTrainedTokenizerBase
-from transformers.trainer_utils import is_main_process
+from utils.utils_distributed_training import is_main_process
 
 
 
@@ -254,9 +251,9 @@ def main():
         raise ValueError("Dataset should be race or dream.")
     else:
         if data_args.dataset == 'race':
-            from utils_race import prepare_features_for_generate_pseudo_label
+            from utils.utils_race import prepare_features_for_generate_pseudo_label
         if data_args.dataset == 'dream':
-            from utils_dream import prepare_features
+            pass
 
     # In distributed training, the load_dataset function guarantee that only one local process can concurrently
     # download the dataset.
