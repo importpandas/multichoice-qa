@@ -258,7 +258,8 @@ def prepare_features_for_initializing_evidence_selctor(examples, evidence_len=2,
             labels.append(1)
 
         all_irre_sent_idxs = list(filter(lambda x: x not in per_example_evidence_sent_idxs, list(range(len(per_example_sent_starts) - 1))))
-        for irre_sent_idx in random.sample(all_irre_sent_idxs, evidence_len):
+        negative_sent_num = evidence_len if evidence_len <= len(all_irre_sent_idxs) else len(all_irre_sent_idxs)
+        for irre_sent_idx in random.sample(all_irre_sent_idxs, negative_sent_num):
             sent_start = per_example_sent_starts[irre_sent_idx]
             sent_end = per_example_sent_starts[irre_sent_idx + 1]
             irre_sent = full_context[sent_start: sent_end]
@@ -271,7 +272,7 @@ def prepare_features_for_initializing_evidence_selctor(examples, evidence_len=2,
     tokenized_examples = tokenizer(
         processed_contexts,
         qa_list,
-        truncation="only_first",
+        truncation=True,
         max_length=data_args.max_seq_length,
         padding="max_length" if data_args.pad_to_max_length else False,
     )
