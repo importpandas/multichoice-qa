@@ -282,4 +282,117 @@ def prepare_features_for_initializing_evidence_selctor(examples, evidence_len=2,
     # Un-flatten
     return tokenized_examples
 
+def prepare_features_for_generating_evidence_using_selector(examples, tokenizer=None, data_args=None):
+    contexts = examples['article']
+    answers = examples['answer']
+    options = examples['options']
+    questions = examples['question']
+    example_ids = examples['example_id']
+    sent_starts = examples['article_sent_start']
+
+    qa_list = []
+    processed_contexts = []
+    all_example_ids = []
+    all_sent_idx = []
+
+    for i in range(len(answers)):
+        full_context = contexts[i]
+
+        qa_concat = process_text(questions[i])
+        for j in range(4):
+            option = process_text(options[i][j])
+            qa_concat += "[SEP]"
+            qa_concat += option
+
+        per_example_sent_starts = sent_starts[i]
+        per_example_sent_starts.append(len(full_context))
+
+        for j in range(len(per_example_sent_starts) - 1):
+            sent_start = per_example_sent_starts[j]
+            sent_end = per_example_sent_starts[j + 1]
+            sent = full_context[sent_start: sent_end]
+            processed_contexts.append(sent)
+            qa_list.append(qa_concat)
+            all_example_ids.append(example_ids[i])
+            all_sent_idx.append(j)
+
+
+
+    tokenized_examples = tokenizer(
+        processed_contexts,
+        qa_list,
+        truncation=True,
+        max_length=data_args.max_seq_length,
+        padding="max_length" if data_args.pad_to_max_length else False,
+    )
+
+    tokenized_examples['example_ids'] = all_example_ids
+    tokenized_examples['sent_idx'] = all_sent_idx
+
+    # Un-flatten
+    return tokenized_examples
+
+def prepare_features_for_reading_evidence(examples, evidence_logits, evidence_len=2, tokenizer=None, data_args=None):
+    contexts = examples['article']
+    answers = examples['answer']
+    options = examples['options']
+    questions = examples['question']
+    example_ids = examples['example_id']
+    sent_starts = examples['article_sent_start']
+
+    labels = []
+    qa_list = []
+    processed_contexts = []
+
+    for i in range(len(answers)):
+        full_context = contexts[i]
+        evidence_concat = ""
+
+        per_example_evidence_logits = evidence_logits[example_ids[i]]
+        per_example_sent_starts = sent_starts[i]
+        per_example_sent_starts.append(len(full_context))
+
+        per_example_evidence_sent_idxs = sorted([idx for (idx, logit) in
+                                sorted(per_example_evidence_logits.items(), key=lambda x: x[1])[-evidence_len: ]])
+
+
+
+        for evidence_sent_idx in per_example_evidence_sent_idxs:
+            sent_start = per_example_sent_starts[evidence_sent_idx]
+            sent_end = per_example_sent_starts[evidence_sent_idx + 1]
+            evidence_concat += full_context[sent_start: sent_end]
+
+        label = ord(answers[i]) - ord("A")
+        labels.append(label)
+        processed_contexts.append([evidence_concat] * 4)
+
+        question = process_text(questions[i])
+        qa_pairs = []
+        for j in range(4):
+            option = process_text(options[i][j])
+
+            if "_" in question:
+                qa_cat = question.replace("_", option)
+            else:
+                qa_cat = " ".join([question, option])
+            qa_cat = " ".join(whitespace_tokenize(qa_cat)[- data_args.max_qa_length:])
+            qa_pairs.append(qa_cat)
+        qa_list.append(qa_pairs)
+
+    first_sentences = sum(processed_contexts, [])
+    second_sentences = sum(qa_list, [])
+
+    tokenized_examples = tokenizer(
+        first_sentences,
+        second_sentences,
+        truncation="only_first",
+        max_length=data_args.max_seq_length,
+        padding="max_length" if data_args.pad_to_max_length else False,
+    )
+    tokenized_examples = {k: [v[i: i + 4] for i in range(0, len(v), 4)] for k, v in tokenized_examples.items()}
+
+    tokenized_examples['label'] = labels
+
+    # Un-flatten
+    return tokenized_examples
 

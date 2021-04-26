@@ -20,6 +20,7 @@ Fine-tuning the library models for multiple choice.
 import logging
 import os
 import sys
+from pathlib import Path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dataclasses import dataclass, field
 from typing import Optional, Union
@@ -33,6 +34,7 @@ import transformers
 from transformers import (
     AutoConfig,
     AutoModelForSequenceClassification,
+    AutoModelForMultipleChoice,
     AutoTokenizer,
     HfArgumentParser,
     Trainer,
@@ -43,8 +45,12 @@ from transformers.tokenization_utils_base import PaddingStrategy, PreTrainedToke
 from utils.utils_distributed_training import is_main_process
 
 from utils.hyperparam import hyperparam_path_for_baseline
-from utils.initialization import set_logger
+from utils.initialization import setup_root_logger
 
+from trainer.trainer import EvidenceSelectorTrainer
+from data_utils.collator import *
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class ModelArguments:
@@ -54,6 +60,9 @@ class ModelArguments:
 
     model_name_or_path: str = field(
         metadata={"help": "Path to pretrained model or model identifier from huggingface.co/models"}
+    )
+    evidence_reader_path: str = field(
+        metadata={"help": "Path to pretrained MRC system 2 for answering questions using evidence"}
     )
     config_name: Optional[str] = field(
         default=None, metadata={"help": "Pretrained config name or path if not the same as model_name"}
@@ -153,54 +162,6 @@ class DataTrainingArguments:
             assert extension in ["csv", "json"], "`validation_file` should be a csv or a json file."
 
 
-@dataclass
-class DataCollatorForEvidenceClassification:
-    """
-    Data collator that will dynamically pad the inputs for multiple choice received.
-
-    Args:
-        tokenizer (:class:`~transformers.PreTrainedTokenizer` or :class:`~transformers.PreTrainedTokenizerFast`):
-            The tokenizer used for encoding the data.
-        padding (:obj:`bool`, :obj:`str` or :class:`~transformers.tokenization_utils_base.PaddingStrategy`, `optional`, defaults to :obj:`True`):
-            Select a strategy to pad the returned sequences (according to the model's padding side and padding index)
-            among:
-
-            * :obj:`True` or :obj:`'longest'`: Pad to the longest sequence in the batch (or no padding if only a single
-              sequence if provided).
-            * :obj:`'max_length'`: Pad to a maximum length specified with the argument :obj:`max_length` or to the
-              maximum acceptable input length for the model if that argument is not provided.
-            * :obj:`False` or :obj:`'do_not_pad'` (default): No padding (i.e., can output a batch with sequences of
-              different lengths).
-        max_length (:obj:`int`, `optional`):
-            Maximum length of the returned list and optionally padding length (see above).
-        pad_to_multiple_of (:obj:`int`, `optional`):
-            If set will pad the sequence to a multiple of the provided value.
-
-            This is especially useful to enable the use of Tensor Cores on NVIDIA hardware with compute capability >=
-            7.5 (Volta).
-    """
-
-    tokenizer: PreTrainedTokenizerBase
-    padding: Union[bool, str, PaddingStrategy] = True
-    max_length: Optional[int] = None
-    pad_to_multiple_of: Optional[int] = None
-
-    def __call__(self, features):
-        label_name = "label" if "label" in features[0].keys() else "labels"
-        labels = [feature.pop(label_name) for feature in features]
-
-        batch = self.tokenizer.pad(
-            features,
-            padding=self.padding,
-            max_length=self.max_length,
-            pad_to_multiple_of=self.pad_to_multiple_of,
-            return_tensors="pt",
-        )
-        # Add back labels
-        batch["labels"] = torch.tensor(labels, dtype=torch.int64)
-        return batch
-
-
 def main():
     # See all possible arguments in src/transformers/training_args.py
     # or by passing the --help flag to this script.
@@ -214,10 +175,16 @@ def main():
     else:
         model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
-    exp_path = hyperparam_path_for_baseline(model_args, data_args, training_args)
-    logger = set_logger(exp_path, is_main_process=is_main_process(training_args.local_rank))
+    checkpoint_dir = hyperparam_path_for_baseline(model_args, data_args, training_args)
+    ckpt_dir = Path(checkpoint_dir)
+    postfix = ""
+    if training_args.do_train:
+        postfix += "_train"
+    if training_args.do_eval:
+        postfix += "_eval"
+    setup_root_logger(ckpt_dir, training_args.local_rank, debug=False, postfix=postfix)
 
-    training_args.output_dir = exp_path
+    training_args.output_dir = checkpoint_dir
     if (
         os.path.exists(training_args.output_dir)
         and os.listdir(training_args.output_dir)
@@ -254,7 +221,8 @@ def main():
         raise ValueError("Dataset should be race or dream.")
     else:
         if data_args.dataset == 'race':
-            from utils.utils_race import prepare_features_for_initializing_evidence_selctor
+            from utils.utils_race import prepare_features_for_initializing_evidence_selctor, \
+                prepare_features_for_generating_evidence_using_selector, prepare_features_for_reading_evidence
         if data_args.dataset == 'dream':
             pass
 
@@ -284,12 +252,20 @@ def main():
         cache_dir=model_args.cache_dir,
         use_fast=model_args.use_fast_tokenizer,
     )
-    model = AutoModelForSequenceClassification.from_pretrained(
+    evidence_selector = AutoModelForSequenceClassification.from_pretrained(
         model_args.model_name_or_path,
         from_tf=bool(".ckpt" in model_args.model_name_or_path),
         config=config,
         cache_dir=model_args.cache_dir,
     )
+
+    evidence_reader = AutoModelForMultipleChoice.from_pretrained(
+        model_args.evidence_reader_path,
+        from_tf=bool(".ckpt" in model_args.model_name_or_path),
+        config=config,
+        cache_dir=model_args.cache_dir,
+    )
+
 
     if training_args.do_train:
         column_names = datasets["train"].column_names
@@ -302,17 +278,31 @@ def main():
 
     pprepare_features_for_initializing_evidence_selctor = partial(prepare_features_for_initializing_evidence_selctor, evidence_len=data_args.evidence_len,
                                 tokenizer=tokenizer, data_args=data_args, all_pseudo_label=pseudo_label_merged)
-    tokenized_datasets = datasets.map(
+    initializing_evidence_selctor_datasets = datasets.map(
         pprepare_features_for_initializing_evidence_selctor,
         batched=True,
         num_proc=data_args.preprocessing_num_workers,
         remove_columns=column_names,
         load_from_cache_file=not data_args.overwrite_cache,
     )
+    pprepare_features_for_generating_evidence_using_selector = partial(prepare_features_for_generating_evidence_using_selector,
+                                tokenizer=tokenizer, data_args=data_args)
+    evidence_generating_datasets = {k: datasets[k].map(
+        pprepare_features_for_generating_evidence_using_selector,
+        batched=True,
+        num_proc=data_args.preprocessing_num_workers,
+        remove_columns=column_names,
+        load_from_cache_file=not data_args.overwrite_cache,
+    ) for k in datasets.keys() if k != "train"}
+
+    pprepare_features_for_reading_evidence = partial(prepare_features_for_reading_evidence, evidence_len=data_args.evidence_len,
+                                tokenizer=tokenizer, data_args=data_args)
+
+
 
 
     # Data collator
-    data_collator = DataCollatorForEvidenceClassification(tokenizer=tokenizer)
+    data_collator = DataCollatorForInitializingEvidenceSelector(tokenizer=tokenizer)
 
     # Metric
     def compute_metrics(eval_predictions):
@@ -321,11 +311,11 @@ def main():
         return {"accuracy": (preds == label_ids).astype(np.float32).mean().item()}
 
     # Initialize our Trainer
-    trainer = Trainer(
-        model=model,
+    trainer = EvidenceSelectorTrainer(
+        model=evidence_selector,
         args=training_args,
-        train_dataset=tokenized_datasets["train"] if training_args.do_train else None,
-        eval_dataset=tokenized_datasets["validation"] if training_args.do_eval else None,
+        train_dataset=initializing_evidence_selctor_datasets["train"] if training_args.do_train else None,
+        eval_dataset=initializing_evidence_selctor_datasets["validation"] if training_args.do_eval else None,
         tokenizer=tokenizer,
         data_collator=data_collator,
         compute_metrics=compute_metrics,
@@ -359,8 +349,12 @@ def main():
 
     if eval_on_dev:
         logger.info("*** Evaluate ***")
-        results = trainer.evaluate(eval_dataset=tokenized_datasets["validation"])
+        #results = trainer.evaluate(eval_dataset=initializing_evidence_selctor_datasets["validation"])
+        results = {}
+        fulleval_results = trainer.evaluate_with_explicit_reader(evidence_reader, datasets["validation"], pprepare_features_for_reading_evidence,
+                                                                 evidence_generating_datasets["validation"])
 
+        results = {**results, **fulleval_results}
         output_eval_file = os.path.join(training_args.output_dir, "eval_results.txt")
         if trainer.is_world_process_zero():
             with open(output_eval_file, "w") as writer:
@@ -371,7 +365,7 @@ def main():
     if eval_on_test:
         logger.info("*** Test ***")
 
-        results = trainer.evaluate(eval_dataset=tokenized_datasets["test"])
+        results = trainer.evaluate(eval_dataset=initializing_evidence_selctor_datasets["test"])
 
         output_test_file = os.path.join(training_args.output_dir, "test_results.txt")
         if trainer.is_world_process_zero():

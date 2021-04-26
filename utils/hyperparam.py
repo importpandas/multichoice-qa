@@ -10,9 +10,13 @@ def hyperparam_path_for_baseline(model_args, data_args, training_args):
     now_time = time.strftime("%Y_%m_%d_%H:%M:%S", time.localtime())
     exp_name = hyperparam_base(model_args, data_args, training_args)
     exp_path = os.path.join(training_args.output_dir, dataset_name, model_type, exp_name, now_time)
-    if not os.path.exists(exp_path):
+
+
+    if training_args.do_train and not os.path.exists(exp_path):
         os.makedirs(exp_path)
-    return exp_path
+        return exp_path
+    else:
+        return model_args.model_name_or_path
 
 
 def hyperparam_base(model_args, data_args, training_args):
