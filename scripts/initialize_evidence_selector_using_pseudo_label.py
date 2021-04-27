@@ -349,8 +349,7 @@ def main():
 
     if eval_on_dev:
         logger.info("*** Evaluate ***")
-        #results = trainer.evaluate(eval_dataset=initializing_evidence_selctor_datasets["validation"])
-        results = {}
+        results = trainer.evaluate(eval_dataset=initializing_evidence_selctor_datasets["validation"])
         fulleval_results = trainer.evaluate_with_explicit_reader(evidence_reader, datasets["validation"], pprepare_features_for_reading_evidence,
                                                                  evidence_generating_datasets["validation"])
 
@@ -366,7 +365,10 @@ def main():
         logger.info("*** Test ***")
 
         results = trainer.evaluate(eval_dataset=initializing_evidence_selctor_datasets["test"])
+        fulleval_results = trainer.evaluate_with_explicit_reader(evidence_reader, datasets["test"], pprepare_features_for_reading_evidence,
+                                                                 evidence_generating_datasets["test"])
 
+        results = {**results, **fulleval_results}
         output_test_file = os.path.join(training_args.output_dir, "test_results.txt")
         if trainer.is_world_process_zero():
             with open(output_test_file, "w") as writer:

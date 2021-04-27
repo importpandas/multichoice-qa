@@ -30,8 +30,6 @@ from transformers.trainer_utils import speed_metrics
 
 from data_utils.collator import *
 
-from utils.utils_race import prepare_features_for_reading_evidence
-
 logger = logging.getLogger(__name__)
 
 
@@ -180,7 +178,6 @@ class EvidenceSelectorTrainer(Trainer):
                 if example_id not in evidence_logits.keys():
                     evidence_logits[example_id] = {}
                 evidence_logits[example_id][sent_idx] = logits[i][1].item()
-            break
 
         output = self.evidence_reading(evidence_reader, eval_dataset,  prepare_feature_func, evidence_logits)
 
