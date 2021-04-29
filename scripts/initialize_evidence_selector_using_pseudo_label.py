@@ -44,7 +44,7 @@ from transformers import (
 from transformers.tokenization_utils_base import PaddingStrategy, PreTrainedTokenizerBase
 from utils.utils_distributed_training import is_main_process
 
-from utils.hyperparam import hyperparam_path_for_baseline
+from utils.hyperparam import hyperparam_path_for_initializing_evidence_selector
 from utils.initialization import setup_root_logger
 
 from trainer.trainer import EvidenceSelectorTrainer
@@ -175,12 +175,12 @@ def main():
     else:
         model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
-    checkpoint_dir = hyperparam_path_for_baseline(model_args, data_args, training_args)
+    checkpoint_dir = hyperparam_path_for_initializing_evidence_selector(model_args, data_args, training_args)
     ckpt_dir = Path(checkpoint_dir)
     postfix = ""
     if training_args.do_train:
         postfix += "_train"
-    if training_args.do_eval:
+    elif training_args.do_eval:
         postfix += "_eval"
     setup_root_logger(ckpt_dir, training_args.local_rank, debug=False, postfix=postfix)
 

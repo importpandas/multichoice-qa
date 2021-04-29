@@ -1,4 +1,4 @@
-#coding=utf8
+# coding=utf8
 """ Utility functions include:
 1. set output logging path
 2. set random seed for all libs
@@ -9,6 +9,7 @@ import random, torch
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
 
 def setup_root_logger(checkpoint_dir, rank, debug, postfix=""):
     """Setup the root logger for all the packages
@@ -32,13 +33,13 @@ def setup_root_logger(checkpoint_dir, rank, debug, postfix=""):
     stdout_handler.setLevel(logging.WARNING)
     handlers.append(stdout_handler)
 
-    if rank == 0:
+    if rank == 0 or rank == -1:
         critical_handler = logging.FileHandler(log_dir / 'critical.log')
         critical_handler.setLevel(logging.WARNING)
         handlers.append(critical_handler)
 
-    #package_name = __name__.split('.')[0]
-    #root_logger = logging.getLogger(package_name)
+    # package_name = __name__.split('.')[0]
+    # root_logger = logging.getLogger(package_name)
     root_logger = logging.getLogger()
     formatter = logging.Formatter(
         '%(asctime)s[%(name)s]-%(levelname)s-%(message)s',
@@ -59,6 +60,7 @@ def redirect_stderr():
 
     class LoggerWriter:
         """https://github.com/apache/airflow/pull/6767/files"""
+
         def __init__(self, target_logger, level=logging.INFO):
             self.logger = target_logger
             self.level = level
@@ -81,7 +83,7 @@ def redirect_stderr():
 
 
 def set_logger(exp_path, testing=False, is_main_process=True):
-    logFormatter = logging.Formatter('%(asctime)s - %(message)s') #('%(asctime)s - %(levelname)s - %(message)s')
+    logFormatter = logging.Formatter('%(asctime)s - %(message)s')  # ('%(asctime)s - %(levelname)s - %(message)s')
     logger = logging.getLogger('mylogger')
     logger.setLevel(logging.DEBUG if is_main_process else logging.WARNING)
     if testing:
@@ -95,12 +97,14 @@ def set_logger(exp_path, testing=False, is_main_process=True):
     logger.addHandler(consoleHandler)
     return logger
 
+
 def set_random_seed(random_seed=999):
     random.seed(random_seed)
     np.random.seed(random_seed)
     torch.manual_seed(random_seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed(random_seed)
+
 
 def set_torch_device(deviceId):
     if deviceId < 0:
