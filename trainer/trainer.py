@@ -40,7 +40,7 @@ class EvidenceSelectorTrainer(Trainer):
             evidence_reader,
             eval_dataset,
             prepare_feature_func,
-            evidence_logits,
+            metric_key_prefix="fulleval"
     ):
         evidence_reader = evidence_reader.to(self.args.device)
         evidence_reader = self._wrap_model(evidence_reader, training=False)
@@ -49,9 +49,8 @@ class EvidenceSelectorTrainer(Trainer):
 
         column_names = eval_dataset.column_names
 
-        pprepare_feature_func = partial(prepare_feature_func, evidence_logits=evidence_logits)
         processed_datasets = eval_dataset.map(
-            pprepare_feature_func,
+            prepare_feature_func,
             batched=True,
             remove_columns=column_names,
             load_from_cache_file=False,
@@ -78,12 +77,12 @@ class EvidenceSelectorTrainer(Trainer):
             # self.args.prediction_loss_only
             prediction_loss_only=True if self.compute_metrics is None else None,
             ignore_keys=None,
-            metric_key_prefix="fulleval",
+            metric_key_prefix=metric_key_prefix,
         )
         self.model = evidence_generator
 
         n_samples = len(processed_datasets)
-        output.metrics.update(speed_metrics("fulleval", start_time, n_samples))
+        output.metrics.update(speed_metrics(metric_key_prefix, start_time, n_samples))
         self.log(output.metrics)
         return output
         #
@@ -140,7 +139,6 @@ class EvidenceSelectorTrainer(Trainer):
             dictionary also contains the epoch number which comes from the training state.
         """
         # memory metrics - must set up as early as possible
-        self._memory_tracker.start()
         evidence_generating_data_collator = DataCollatorForGeneratingEvidenceUsingSelector(tokenizer=self.tokenizer)
 
         if evidence_generating_dataset is not None and not isinstance(evidence_generating_dataset,
@@ -160,7 +158,6 @@ class EvidenceSelectorTrainer(Trainer):
             num_workers=self.args.dataloader_num_workers,
             pin_memory=self.args.dataloader_pin_memory,
         )
-        # start_time = time.time()
 
         evidence_logits = {}
         for step, batch in enumerate(evidence_generating_dataloader):
@@ -179,7 +176,11 @@ class EvidenceSelectorTrainer(Trainer):
                     evidence_logits[example_id] = {}
                 evidence_logits[example_id][sent_idx] = logits[i][1].item()
 
-        output = self.evidence_reading(evidence_reader, eval_dataset,  prepare_feature_func, evidence_logits)
+        metrics = {}
+        for evidence_len in [2, 3 ,4]:
+            pprepare_feature_func = partial(prepare_feature_func, evidence_len=evidence_len, evidence_logits=evidence_logits)
+            output = self.evidence_reading(evidence_reader, eval_dataset,  pprepare_feature_func, metric_key_prefix=f'fulleval{evidence_len}')
+            metrics = {**metrics, **output.metrics}
 
-        return output.metrics
+        return metrics
         # return output.metrics

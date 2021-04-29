@@ -295,8 +295,7 @@ def main():
         load_from_cache_file=not data_args.overwrite_cache,
     ) for k in datasets.keys() if k != "train"}
 
-    pprepare_features_for_reading_evidence = partial(prepare_features_for_reading_evidence, evidence_len=data_args.evidence_len,
-                                tokenizer=tokenizer, data_args=data_args)
+    pprepare_features_for_reading_evidence = partial(prepare_features_for_reading_evidence, tokenizer=tokenizer, data_args=data_args)
 
 
 
