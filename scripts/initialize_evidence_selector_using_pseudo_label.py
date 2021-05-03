@@ -85,7 +85,9 @@ class DataTrainingArguments:
     """
     Arguments pertaining to what data we are going to input our model for training and eval.
     """
-
+    pseudo_label_path: str = field(
+        metadata={"help": "Path to pseudo evidence label"}
+    )
     train_file: Optional[str] = field(default=None, metadata={"help": "The input training data file (a text file)."})
     validation_file: Optional[str] = field(
         default=None,
@@ -185,16 +187,6 @@ def main():
     setup_root_logger(ckpt_dir, training_args.local_rank, debug=False, postfix=postfix)
 
     training_args.output_dir = checkpoint_dir
-    if (
-        os.path.exists(training_args.output_dir)
-        and os.listdir(training_args.output_dir)
-        and training_args.do_train
-        and not training_args.overwrite_output_dir
-    ):
-        raise ValueError(
-            f"Output directory ({training_args.output_dir}) already exists and is not empty."
-            "Use --overwrite_output_dir to overcome."
-        )
 
 
     # Log on each process the small summary:
@@ -272,9 +264,13 @@ def main():
     else:
         column_names = datasets["validation"].column_names
 
-    pseudo_label = torch.load("race_pseudo_label_full.pt")
-    pseudo_label_merged = dict(pseudo_label['train'], **pseudo_label['test'])
-    pseudo_label_merged = dict(pseudo_label_merged, **pseudo_label['validation'])
+    pseudo_label = torch.load(data_args.pseudo_label_path)
+    pseudo_label_merged = {}
+    pseudo_label_merged['acc'] = pseudo_label['acc']
+    # pseudo_label_merged['acc'] = dict(**pseudo_label['acc']['train'],
+    #                                   **pseudo_label['acc']['validation'], **pseudo_label['acc']['test'])
+    pseudo_label_merged['logit'] = dict(**pseudo_label['pseudo_label']['train'],
+                                      **pseudo_label['pseudo_label']['validation'], **pseudo_label['pseudo_label']['test'])
 
     pprepare_features_for_initializing_evidence_selctor = partial(prepare_features_for_initializing_evidence_selctor, evidence_len=data_args.evidence_len,
                                 tokenizer=tokenizer, data_args=data_args, all_pseudo_label=pseudo_label_merged)

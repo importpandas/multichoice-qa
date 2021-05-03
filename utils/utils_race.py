@@ -93,12 +93,28 @@ def prepare_features_for_generate_pseudo_label(examples, tokenizer=None, data_ar
     qa_list = []
     processed_contexts = []
 
+    features = {}
+    features['input_ids'] = []
+    features['attention_mask'] = []
+    features['token_type_ids'] = []
+    features['sent_bound_token'] = []
+    features['example_ids'] = []
+    features['label'] = []
+
     for i in range(len(answers)):
 
-        processed_contexts.append([process_text(contexts[i])] * 4)
 
+        #processed_contexts.append([process_text(contexts[i])] * 4)
+        processed_context = contexts[i]
+        example_id = example_ids[i]
+        label = ord(answers[i]) - ord("A")
         question = process_text(questions[i])
-        qa_pairs = []
+        per_example_sent_starts = sent_starts[i]
+        per_example_sent_ends = [char_idx for char_idx in per_example_sent_starts[1:]] + [len(processed_context) - 1]
+
+        choices_inputs = []
+        all_text_b = []
+        all_text_b_len = []
         for j in range(4):
             option = process_text(options[i][j])
 
@@ -107,37 +123,49 @@ def prepare_features_for_generate_pseudo_label(examples, tokenizer=None, data_ar
             else:
                 qa_cat = " ".join([question, option])
             #truncated_qa_cat = tokenizer.tokenize(qa_cat, add_special_tokens=False, max_length=data_args.max_qa_length)
-            qa_cat = " ".join(whitespace_tokenize(qa_cat)[- data_args.max_qa_length:])
-            qa_pairs.append(qa_cat)
-        qa_list.append(qa_pairs)
+            truncated_text_b_id = tokenizer.encode(qa_cat, truncation=True, max_length=data_args.max_qa_length, add_special_tokens=False)
+            truncated_text_b = tokenizer.decode(truncated_text_b_id, clean_up_tokenization_spaces=False)
+            all_text_b.append(truncated_text_b)
+            all_text_b_len.append(len(tokenizer.encode(truncated_text_b, add_special_tokens=False)))
 
-    first_sentences = sum(processed_contexts, [])
-    second_sentences = sum(qa_list, [])
+        for j in range(4):
+            text_b = all_text_b[j] + tokenizer.pad_token * (max(all_text_b_len) - all_text_b_len[j])
 
+            inputs = tokenizer(
+                processed_context,
+                text_b,
+                add_special_tokens=True,
+                max_length=data_args.max_seq_length,
+                padding="max_length" if data_args.pad_to_max_length else False,
+                truncation='only_first',
+                stride=data_args.max_seq_length - 3 - 128 - max(all_text_b_len),
+                return_overflowing_tokens=True,
+                )
+            choices_inputs.append(inputs)
+        assert len(set([len(x["input_ids"]) for x in choices_inputs])) == 1
 
-
-    tokenized_examples = tokenizer(
-        first_sentences,
-        second_sentences,
-        truncation="only_first",
-        max_length=data_args.max_seq_length,
-        padding="max_length" if data_args.pad_to_max_length else False,
-    )
-    sent_start_token = [[v for v in [tokenized_examples.char_to_token(i*4 + j, sent_start) for sent_start in one_sent_starts] if v]
-                        for i, one_sent_starts in enumerate(sent_starts) for j in range(4)]
-
-
-    tokenized_examples = {k: [v[i: i + 4] for i in range(0, len(v), 4)] for k, v in tokenized_examples.items()}
-
-    tokenized_examples['sent_start_token'] = []
-    for i in range(0, len(sent_start_token), 4):
-        min_sent_num = min([len(l) for l in sent_start_token[i: i + 4]])
-        tokenized_examples['sent_start_token'].append([l[:min_sent_num] for l in sent_start_token[i: i + 4]])
-
-    tokenized_examples['example_ids'] = example_ids
+        per_example_feature_num = len(choices_inputs[0]["input_ids"])
+        for j in range(per_example_feature_num):
+            input_ids = [x["input_ids"][j] for x in choices_inputs]
+            attention_mask = [x["attention_mask"][j] for x in choices_inputs]
+            token_type_ids = [x["token_type_ids"][j] for x in choices_inputs]
+            sent_bound_token = []
+            for sent_idx, (sent_start, sent_end) in enumerate(zip(per_example_sent_starts, per_example_sent_ends)):
+                if not (choices_inputs[0].char_to_token(j, sent_start) and choices_inputs[0].char_to_token(j, sent_end)):
+                    continue
+                if sent_idx != len(per_example_sent_starts) - 1:
+                    sent_bound_token.append((sent_idx, choices_inputs[0].char_to_token(j, sent_start), choices_inputs[0].char_to_token(j, sent_end) - 1))
+                else:
+                    sent_bound_token.append((sent_idx, choices_inputs[0].char_to_token(j, sent_start), choices_inputs[0].char_to_token(j, sent_end)))
+            features['input_ids'].append(input_ids)
+            features['attention_mask'].append(attention_mask)
+            features['token_type_ids'].append(token_type_ids)
+            features['sent_bound_token'].append(sent_bound_token)
+            features['example_ids'].append(example_id)
+            features['label'].append(label)
 
     # Un-flatten
-    return tokenized_examples
+    return features
 
 # Preprocessing the datasets.
 def prepare_features_for_using_pseudo_label_as_evidence(examples, evidence_len=2, tokenizer=None, data_args=None, all_pseudo_label: dict=None):
@@ -147,18 +175,32 @@ def prepare_features_for_using_pseudo_label_as_evidence(examples, evidence_len=2
     questions = examples['question']
     example_ids = examples['example_id']
     sent_starts = examples['article_sent_start']
-    min_evidence_num = min([len(all_pseudo_label[example_id]) for example_id in example_ids])
-    evidence_len = evidence_len if evidence_len <= min_evidence_num else min_evidence_num
-    evidence_sents = [sorted(torch.argsort(torch.tensor(all_pseudo_label[example_id]))[-evidence_len:].tolist()) for example_id in example_ids]
+
+    pseudo_logit = all_pseudo_label['logit']
+    acc = all_pseudo_label['acc']
 
     qa_list = []
     labels = []
     processed_contexts = []
 
     for i in range(len(answers)):
+        example_id = example_ids[i]
         label = ord(answers[i]) - ord("A")
         labels.append(label)
-        processed_contexts.append([process_text(contexts[i])] * 4)
+        full_context = contexts[i]
+
+
+        evidence_len = evidence_len if evidence_len <= len(pseudo_logit[example_id]) else len(pseudo_logit[example_id])
+        per_example_evidence_sent_idxs = sorted(pseudo_logit[example_id].keys(), key=lambda x: pseudo_logit[example_id][x], reverse=True)[: evidence_len]
+        per_example_sent_starts = sent_starts[i]
+        per_example_sent_starts.append(len(full_context))
+
+        processed_context = ""
+        for evidence_sent_idx in per_example_evidence_sent_idxs:
+            sent_start = per_example_sent_starts[evidence_sent_idx]
+            sent_end = per_example_sent_starts[evidence_sent_idx + 1]
+            evidence_sent = full_context[sent_start: sent_end]
+            processed_context += evidence_sent
 
         question = process_text(questions[i])
         qa_pairs = []
@@ -174,6 +216,8 @@ def prepare_features_for_using_pseudo_label_as_evidence(examples, evidence_len=2
             qa_pairs.append(qa_cat)
         qa_list.append(qa_pairs)
 
+        processed_contexts.append([processed_context] * 4)
+
     first_sentences = sum(processed_contexts, [])
     second_sentences = sum(qa_list, [])
 
@@ -186,31 +230,6 @@ def prepare_features_for_using_pseudo_label_as_evidence(examples, evidence_len=2
         max_length=data_args.max_seq_length,
         padding="max_length" if data_args.pad_to_max_length else False,
     )
-    sent_start_tokens = [[v for v in [tokenized_examples.char_to_token(i*4 + j, sent_start) for sent_start in one_sent_starts] if v]
-                        for i, one_sent_starts in enumerate(sent_starts) for j in range(4)]
-
-    for i, (input_ids, token_type_ids, attention_mask, sent_start_token) in enumerate(zip(tokenized_examples['input_ids'], tokenized_examples['token_type_ids'],
-                                                                            tokenized_examples['attention_mask'], sent_start_tokens)):
-        evidence_sent = evidence_sents[i // 4]
-        sep_pos = torch.where(torch.tensor(input_ids) == tokenizer.sep_token_id)[0][0].item()
-        seq_len = len(input_ids)
-        sent_start_token.append(sep_pos)
-        sent_start_token.append(seq_len)
-        new_input_ids = []
-        new_token_type_ids = []
-        new_attention_mask = []
-        new_input_ids.append(input_ids[0])
-        new_token_type_ids.append(token_type_ids[0])
-        new_attention_mask.append(attention_mask[0])
-        for evidence_start in evidence_sent + [len(sent_start_token) - 2]:
-            token_start = sent_start_token[evidence_start]
-            token_end = sent_start_token[evidence_start + 1]
-            new_input_ids += input_ids[token_start: token_end]
-            new_token_type_ids += token_type_ids[token_start: token_end]
-            new_attention_mask += [1] * (token_end - token_start)
-        tokenized_examples['input_ids'][i] = new_input_ids
-        tokenized_examples['token_type_ids'][i] = new_token_type_ids
-        tokenized_examples['attention_mask'][i] = new_attention_mask
 
 
 
@@ -228,9 +247,9 @@ def prepare_features_for_initializing_evidence_selctor(examples, evidence_len=2,
     questions = examples['question']
     example_ids = examples['example_id']
     sent_starts = examples['article_sent_start']
-    min_evidence_num = min([len(all_pseudo_label[example_id]) for example_id in example_ids])
-    evidence_len = evidence_len if evidence_len <= min_evidence_num else min_evidence_num
-    evidence_sent_idxs = [sorted(torch.argsort(torch.tensor(all_pseudo_label[example_id]))[-evidence_len:].tolist()) for example_id in example_ids]
+
+    pseudo_logit = all_pseudo_label['logit']
+    acc = all_pseudo_label['acc']
 
     qa_list = []
     labels = []
@@ -238,6 +257,7 @@ def prepare_features_for_initializing_evidence_selctor(examples, evidence_len=2,
 
     for i in range(len(answers)):
         full_context = contexts[i]
+        example_id = example_ids[i]
 
         qa_concat = process_text(questions[i])
         for j in range(4):
@@ -245,7 +265,8 @@ def prepare_features_for_initializing_evidence_selctor(examples, evidence_len=2,
             qa_concat += "[SEP]"
             qa_concat += option
 
-        per_example_evidence_sent_idxs = evidence_sent_idxs[i]
+        evidence_len = evidence_len if evidence_len <= len(pseudo_logit[example_id]) else len(pseudo_logit[example_id])
+        per_example_evidence_sent_idxs = sorted(pseudo_logit[example_id].keys(), key=lambda x: pseudo_logit[example_id][x], reverse=True)[: evidence_len]
         per_example_sent_starts = sent_starts[i]
         per_example_sent_starts.append(len(full_context))
 

@@ -20,6 +20,7 @@ Fine-tuning the library models for multiple choice.
 import logging
 import os
 import sys
+from pathlib import Path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dataclasses import dataclass, field
 from typing import Optional, Union
@@ -41,6 +42,9 @@ from transformers import (
 )
 from transformers.tokenization_utils_base import PaddingStrategy, PreTrainedTokenizerBase
 from utils.utils_distributed_training import is_main_process
+
+from utils.hyperparam import hyperparam_path_for_initializing_evidence_selector
+from utils.initialization import setup_root_logger
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +80,9 @@ class DataTrainingArguments:
     Arguments pertaining to what data we are going to input our model for training and eval.
     """
 
+    pseudo_label_path: str = field(
+        metadata={"help": "Path to pseudo evidence label"}
+    )
     train_file: Optional[str] = field(default=None, metadata={"help": "The input training data file (a text file)."})
     validation_file: Optional[str] = field(
         default=None,
@@ -222,16 +229,17 @@ def main():
     else:
         model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
-    if (
-        os.path.exists(training_args.output_dir)
-        and os.listdir(training_args.output_dir)
-        and training_args.do_train
-        and not training_args.overwrite_output_dir
-    ):
-        raise ValueError(
-            f"Output directory ({training_args.output_dir}) already exists and is not empty."
-            "Use --overwrite_output_dir to overcome."
-        )
+    checkpoint_dir = hyperparam_path_for_initializing_evidence_selector(model_args, data_args, training_args)
+    ckpt_dir = Path(checkpoint_dir)
+    postfix = ""
+    if training_args.do_train:
+        postfix += "_train"
+    elif training_args.do_eval:
+        postfix += "_eval"
+    setup_root_logger(ckpt_dir, training_args.local_rank, debug=False, postfix=postfix)
+
+    training_args.output_dir = checkpoint_dir
+
 
     # Setup logging
     logging.basicConfig(
@@ -306,9 +314,13 @@ def main():
     else:
         column_names = datasets["validation"].column_names
 
-    pseudo_label = torch.load("race_pseudo_label_full.pt")
-    pseudo_label_merged = dict(pseudo_label['train'], **pseudo_label['test'])
-    pseudo_label_merged = dict(pseudo_label_merged, **pseudo_label['validation'])
+    pseudo_label = torch.load(data_args.pseudo_label_path)
+    pseudo_label_merged = {}
+    pseudo_label_merged['acc'] = pseudo_label['acc']
+    # pseudo_label_merged['acc'] = dict(**pseudo_label['acc']['train'],
+    #                                   **pseudo_label['acc']['validation'], **pseudo_label['acc']['test'])
+    pseudo_label_merged['logit'] = dict(**pseudo_label['pseudo_label']['train'],
+                                      **pseudo_label['pseudo_label']['validation'], **pseudo_label['pseudo_label']['test'])
 
     pprepare_features_for_using_pseudo_label_as_evidence = partial(prepare_features_for_using_pseudo_label_as_evidence, evidence_len=data_args.evidence_len,
                                 tokenizer=tokenizer, data_args=data_args, all_pseudo_label=pseudo_label_merged)

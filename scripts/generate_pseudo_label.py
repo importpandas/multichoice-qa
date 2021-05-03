@@ -45,6 +45,7 @@ from transformers import (
 )
 from transformers.tokenization_utils_base import PaddingStrategy, PreTrainedTokenizerBase
 from utils.utils_distributed_training import is_main_process
+from data_utils.collator import DataCollatorForGeneratingEvidenceLabel
 
 
 
@@ -149,61 +150,6 @@ class DataTrainingArguments:
             extension = self.validation_file.split(".")[-1]
             assert extension in ["csv", "json"], "`validation_file` should be a csv or a json file."
 
-
-@dataclass
-class DataCollatorForGeneratingEvidenceLabel:
-    """
-    Data collator that will dynamically pad the inputs.
-
-    Args:
-        tokenizer (:class:`~transformers.PreTrainedTokenizer` or :class:`~transformers.PreTrainedTokenizerFast`):
-            The tokenizer used for encoding the data.
-        padding (:obj:`bool`, :obj:`str` or :class:`~transformers.tokenization_utils_base.PaddingStrategy`, `optional`, defaults to :obj:`True`):
-            Select a strategy to pad the returned sequences (according to the model's padding side and padding index)
-            among:
-
-            * :obj:`True` or :obj:`'longest'`: Pad to the longest sequence in the batch (or no padding if only a single
-              sequence if provided).
-            * :obj:`'max_length'`: Pad to a maximum length specified with the argument :obj:`max_length` or to the
-              maximum acceptable input length for the model if that argument is not provided.
-            * :obj:`False` or :obj:`'do_not_pad'` (default): No padding (i.e., can output a batch with sequences of
-              different lengths).
-        max_length (:obj:`int`, `optional`):
-            Maximum length of the returned list and optionally padding length (see above).
-        pad_to_multiple_of (:obj:`int`, `optional`):
-            If set will pad the sequence to a multiple of the provided value.
-
-            This is especially useful to enable the use of Tensor Cores on NVIDIA hardware with compute capability >=
-            7.5 (Volta).
-    """
-
-    tokenizer: PreTrainedTokenizerBase
-    padding: Union[bool, str, PaddingStrategy] = True
-    max_length: Optional[int] = None
-    pad_to_multiple_of: Optional[int] = None
-
-    def __call__(self, features):
-        batch_size = len(features)
-        num_choices = len(features[0]["input_ids"])
-        flattened_features = [
-            [{k: v[i] for k, v in feature.items() if k not in ["example_ids", "sent_start_token"]} for i in range(num_choices)] for feature in features
-        ]
-        flattened_features = sum(flattened_features, [])
-
-        batch = self.tokenizer.pad(
-            flattened_features,
-            padding=self.padding,
-            max_length=self.max_length,
-            pad_to_multiple_of=self.pad_to_multiple_of,
-            return_tensors="pt",
-        )
-
-        # Un-flatten
-        batch = {k: v.view(batch_size, num_choices, -1) for k, v in batch.items()}
-        batch['example_ids'] = [feature['example_ids'] for feature in features]
-        batch['sent_start_token'] = [feature['sent_start_token'] for feature in features]
-        # Add back labels
-        return batch
 
 
 def main():
@@ -312,6 +258,7 @@ def main():
         model = torch.nn.DataParallel(model)
 
     pseudo_label = {}
+    acc = {}
     for train_test_or_eval, dataset in tokenized_datasets.items():
         dataloader = DataLoader(
             dataset,
@@ -322,6 +269,7 @@ def main():
         )
 
         pseudo_label_split = {}
+        acc_split = {}
         print(f'{train_test_or_eval}', len(dataloader))
         for step, batch in tqdm.tqdm(enumerate(dataloader)):
             with torch.no_grad():
@@ -333,26 +281,31 @@ def main():
                 origin_logits = model(**origin_inputs).logits.detach().cpu()
 
             example_ids = batch['example_ids']
-            sent_starts = batch['sent_start_token']
-            sep_pos = [[torch.where(batch['input_ids'][i][j] == tokenizer.sep_token_id)[0][0].item() 
-                                                for j in range(4)] for i in range(len(example_ids))]
+            sent_bounds = batch['sent_bound_token']
 
-            for i, one_example_sent_starts in enumerate(sent_starts):
 
-                kl_div_per_example = []
+            for i, one_example_sent_bounds in enumerate(sent_bounds):
+
+                if example_ids[i] not in pseudo_label_split.keys():
+                    kl_div_per_example = {}
+                    pseudo_label_split[example_ids[i]] = kl_div_per_example
+                else:
+                    kl_div_per_example = pseudo_label_split[example_ids[i]]
+
                 one_example_logit = origin_logits[i]
-                one_example_sent_starts = torch.tensor(one_example_sent_starts, device=device)
+                one_example_sent_bounds = torch.tensor(one_example_sent_bounds, device=device)
                 one_example_attention_mask = batch['attention_mask'][i]
                 one_example_input_ids = batch['input_ids'][i]
                 one_example_token_type_ids = batch['token_type_ids'][i]
-                sent_num = one_example_sent_starts.size()[1]
-                sent_bound = torch.cat((one_example_sent_starts, torch.tensor(sep_pos[i], device=device).unsqueeze(1)), dim=-1)
+                one_example_label = batch['labels'][i]
+                sent_num = one_example_sent_bounds.size()[0]
+
 
                 for j in range(0, sent_num, training_args.eval_batch_size):
                     batch_start = j
                     batch_end = j + training_args.eval_batch_size if j < sent_num - training_args.eval_batch_size else sent_num
-                    batched_sent_bound = torch.stack((sent_bound[:, batch_start: batch_end + 1][:, :-1],
-                                         sent_bound[:, batch_start: batch_end + 1][:, 1:])).permute(2, 1, 0)
+                    batched_sent_bound = torch.stack((one_example_sent_bounds[batch_start: batch_end,1],
+                                                      one_example_sent_bounds[batch_start: batch_end, 2])).unsqueeze(1).permute(2, 1, 0)
 
                     batched_attention_mask = one_example_attention_mask.unsqueeze(0).expand(batch_end - batch_start, -1,
                                                                                             -1).clone().to(device)
@@ -373,16 +326,26 @@ def main():
                         }
                         masked_logits = model(**masked_inputs).logits.detach().cpu()
                         kl_divs = torch.sum(F.kl_div(F.log_softmax(masked_logits, dim=-1), F.softmax(one_example_logit, dim=-1), reduction='none'), dim=-1)
-                    kl_div_per_example += kl_divs.detach().cpu().tolist()
-                if example_ids[i] == 'high10001_0':
-                    print(example_ids[i], sent_num, len(kl_div_per_example))
-                assert len(kl_div_per_example) == sent_num
 
-                pseudo_label_split[example_ids[i]] = kl_div_per_example
+                    for k, kl_div in enumerate(kl_divs.detach().cpu().tolist()):
+                        sent_idx = one_example_sent_bounds[batch_start + k, 0].item()
+                        evidence_or_noise = 1 if F.softmax(masked_logits[k])[one_example_label].item() < F.softmax(one_example_logit)[one_example_label].item() else -1
+                        if sent_idx in kl_div_per_example.keys():
+                            kl_div_per_example[sent_idx] = (evidence_or_noise * kl_div) if kl_div > abs(kl_div_per_example[sent_idx])\
+                                                                                    else kl_div_per_example[sent_idx]
+                        else:
+                            kl_div_per_example[sent_idx] = evidence_or_noise * kl_div
+
+                acc_split[example_ids[i]] = 1 if torch.argmax(one_example_logit).item() == one_example_label.item() else 0
 
         pseudo_label[train_test_or_eval] = pseudo_label_split
+        acc[train_test_or_eval] = acc_split
 
-    torch.save(pseudo_label, data_args.dataset + "_pseudo_label.pt")
+    label = {
+        'pseudo_label': pseudo_label,
+        'acc': acc
+    }
+    torch.save(label, data_args.dataset + f"_pseudo_label_{config.model_type}_{config.hidden_size}.pt")
 
 
 def _mp_fn(index):
