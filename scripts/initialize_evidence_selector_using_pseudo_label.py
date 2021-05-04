@@ -88,6 +88,10 @@ class DataTrainingArguments:
     pseudo_label_path: str = field(
         metadata={"help": "Path to pseudo evidence label"}
     )
+    filter_label_with_ground_truth: bool = field(
+        default=True,
+        metadata={"help": "Whether to use pseudo label filtered by ground truth"},
+    )
     train_file: Optional[str] = field(default=None, metadata={"help": "The input training data file (a text file)."})
     validation_file: Optional[str] = field(
         default=None,

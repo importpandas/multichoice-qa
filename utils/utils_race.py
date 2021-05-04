@@ -191,7 +191,12 @@ def prepare_features_for_using_pseudo_label_as_evidence(examples, evidence_len=2
 
 
         evidence_len = evidence_len if evidence_len <= len(pseudo_logit[example_id]) else len(pseudo_logit[example_id])
-        per_example_evidence_sent_idxs = sorted(pseudo_logit[example_id].keys(), key=lambda x: pseudo_logit[example_id][x], reverse=True)[: evidence_len]
+        if data_args.filter_label_with_ground_truth:
+            per_example_evidence_sent_idxs = sorted(pseudo_logit[example_id].keys(),
+                                                    key=lambda x: pseudo_logit[example_id][x], reverse=True)[: evidence_len]
+        else:
+            per_example_evidence_sent_idxs = sorted(pseudo_logit[example_id].keys(),
+                                                    key=lambda x: abs(pseudo_logit[example_id][x]), reverse=True)[: evidence_len]
         per_example_sent_starts = sent_starts[i]
         per_example_sent_starts.append(len(full_context))
 
@@ -266,7 +271,12 @@ def prepare_features_for_initializing_evidence_selctor(examples, evidence_len=2,
             qa_concat += option
 
         evidence_len = evidence_len if evidence_len <= len(pseudo_logit[example_id]) else len(pseudo_logit[example_id])
-        per_example_evidence_sent_idxs = sorted(pseudo_logit[example_id].keys(), key=lambda x: pseudo_logit[example_id][x], reverse=True)[: evidence_len]
+        if data_args.filter_label_with_ground_truth:
+            per_example_evidence_sent_idxs = sorted(pseudo_logit[example_id].keys(),
+                                                    key=lambda x: pseudo_logit[example_id][x], reverse=True)[: evidence_len]
+        else:
+            per_example_evidence_sent_idxs = sorted(pseudo_logit[example_id].keys(),
+                                                    key=lambda x: abs(pseudo_logit[example_id][x]), reverse=True)[: evidence_len]
         per_example_sent_starts = sent_starts[i]
         per_example_sent_starts.append(len(full_context))
 
