@@ -318,16 +318,8 @@ def main():
     else:
         column_names = datasets["validation"].column_names
 
-    pseudo_label = torch.load(data_args.pseudo_label_path)
-    pseudo_label_merged = {}
-    pseudo_label_merged['acc'] = pseudo_label['acc']
-    # pseudo_label_merged['acc'] = dict(**pseudo_label['acc']['train'],
-    #                                   **pseudo_label['acc']['validation'], **pseudo_label['acc']['test'])
-    pseudo_label_merged['logit'] = dict(**pseudo_label['pseudo_label']['train'],
-                                      **pseudo_label['pseudo_label']['validation'], **pseudo_label['pseudo_label']['test'])
-
     pprepare_features_for_using_pseudo_label_as_evidence = partial(prepare_features_for_using_pseudo_label_as_evidence, evidence_len=data_args.evidence_len,
-                                tokenizer=tokenizer, data_args=data_args, all_pseudo_label=pseudo_label_merged)
+                                tokenizer=tokenizer, data_args=data_args, pseudo_label_path=data_args.pseudo_label_path)
     tokenized_datasets = datasets.map(
         pprepare_features_for_using_pseudo_label_as_evidence,
         batched=True,

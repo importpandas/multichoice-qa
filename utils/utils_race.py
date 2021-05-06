@@ -13,6 +13,16 @@ def whitespace_tokenize(text):
     tokens = text.split()
     return tokens
 
+def load_pseudo_label(pseudo_label_path):
+    pseudo_label = torch.load(pseudo_label_path)
+    pseudo_label_merged = {}
+    pseudo_label_merged['acc'] = pseudo_label['acc']
+    # pseudo_label_merged['acc'] = dict(**pseudo_label['acc']['train'],
+    #                                   **pseudo_label['acc']['validation'], **pseudo_label['acc']['test'])
+    pseudo_label_merged['logit'] = dict(**pseudo_label['pseudo_label']['train'],
+                                      **pseudo_label['pseudo_label']['validation'], **pseudo_label['pseudo_label']['test'])
+    return pseudo_label_merged
+
 
 def process_text(inputs, remove_space=True, lower=False):
     """preprocess data by removing extra space and normalize data."""
@@ -90,8 +100,6 @@ def prepare_features_for_generate_pseudo_label(examples, tokenizer=None, data_ar
     example_ids = examples['example_id']
     sent_starts = examples['article_sent_start']
 
-    qa_list = []
-    processed_contexts = []
 
     features = {}
     features['input_ids'] = []
@@ -168,13 +176,15 @@ def prepare_features_for_generate_pseudo_label(examples, tokenizer=None, data_ar
     return features
 
 # Preprocessing the datasets.
-def prepare_features_for_using_pseudo_label_as_evidence(examples, evidence_len=2, tokenizer=None, data_args=None, all_pseudo_label: dict=None):
+def prepare_features_for_using_pseudo_label_as_evidence(examples, evidence_len=2, tokenizer=None, data_args=None, pseudo_label_path=""):
     contexts = examples['article']
     answers = examples['answer']
     options = examples['options']
     questions = examples['question']
     example_ids = examples['example_id']
     sent_starts = examples['article_sent_start']
+
+    all_pseudo_label = load_pseudo_label(pseudo_label_path)
 
     pseudo_logit = all_pseudo_label['logit']
     acc = all_pseudo_label['acc']
@@ -245,13 +255,15 @@ def prepare_features_for_using_pseudo_label_as_evidence(examples, evidence_len=2
     # Un-flatten
     return tokenized_examples
 
-def prepare_features_for_initializing_evidence_selctor(examples, evidence_len=2, tokenizer=None, data_args=None, all_pseudo_label: dict=None):
+def prepare_features_for_initializing_evidence_selctor(examples, evidence_len=2, tokenizer=None, data_args=None, pseudo_label_path=""):
     contexts = examples['article']
     answers = examples['answer']
     options = examples['options']
     questions = examples['question']
     example_ids = examples['example_id']
     sent_starts = examples['article_sent_start']
+
+    all_pseudo_label = load_pseudo_label(pseudo_label_path)
 
     pseudo_logit = all_pseudo_label['logit']
     acc = all_pseudo_label['acc']

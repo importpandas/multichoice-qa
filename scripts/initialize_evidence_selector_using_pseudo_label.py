@@ -37,7 +37,6 @@ from transformers import (
     AutoModelForMultipleChoice,
     AutoTokenizer,
     HfArgumentParser,
-    Trainer,
     TrainingArguments,
     set_seed,
 )
@@ -47,7 +46,7 @@ from utils.utils_distributed_training import is_main_process
 from utils.hyperparam import hyperparam_path_for_initializing_evidence_selector
 from utils.initialization import setup_root_logger
 
-from trainer.trainer import EvidenceSelectorTrainer
+from trainer.trainer import Trainer
 from data_utils.collator import *
 
 logger = logging.getLogger(__name__)
@@ -268,16 +267,8 @@ def main():
     else:
         column_names = datasets["validation"].column_names
 
-    pseudo_label = torch.load(data_args.pseudo_label_path)
-    pseudo_label_merged = {}
-    pseudo_label_merged['acc'] = pseudo_label['acc']
-    # pseudo_label_merged['acc'] = dict(**pseudo_label['acc']['train'],
-    #                                   **pseudo_label['acc']['validation'], **pseudo_label['acc']['test'])
-    pseudo_label_merged['logit'] = dict(**pseudo_label['pseudo_label']['train'],
-                                      **pseudo_label['pseudo_label']['validation'], **pseudo_label['pseudo_label']['test'])
-
     pprepare_features_for_initializing_evidence_selctor = partial(prepare_features_for_initializing_evidence_selctor, evidence_len=data_args.evidence_len,
-                                tokenizer=tokenizer, data_args=data_args, all_pseudo_label=pseudo_label_merged)
+                                tokenizer=tokenizer, data_args=data_args, pseudo_label_path=data_args.pseudo_label_path)
     initializing_evidence_selctor_datasets = datasets.map(
         pprepare_features_for_initializing_evidence_selctor,
         batched=True,
@@ -310,7 +301,7 @@ def main():
         return {"accuracy": (preds == label_ids).astype(np.float32).mean().item()}
 
     # Initialize our Trainer
-    trainer = EvidenceSelectorTrainer(
+    trainer = Trainer(
         model=evidence_selector,
         args=training_args,
         train_dataset=initializing_evidence_selctor_datasets["train"] if training_args.do_train else None,
@@ -321,21 +312,14 @@ def main():
     )
 
     if training_args.do_train:
-        train_result = trainer.train(
-            model_path=model_args.model_name_or_path if os.path.isdir(model_args.model_name_or_path) else None
-        )
-        trainer.save_model()  # Saves the tokenizer too for easy upload
+        train_result = trainer.train()
 
         output_train_file = os.path.join(training_args.output_dir, "train_results.txt")
-        if trainer.is_world_process_zero():
-            with open(output_train_file, "w") as writer:
-                logger.info("***** Train results *****")
-                for key, value in sorted(train_result.metrics.items()):
-                    logger.info(f"  {key} = {value}")
-                    writer.write(f"{key} = {value}\n")
-
-            # Need to save the state, since Trainer.save_model saves only the tokenizer with the model
-            trainer.state.save_to_json(os.path.join(training_args.output_dir, "trainer_state.json"))
+        with open(output_train_file, "w") as writer:
+            logger.info("***** Train results *****")
+            for key, value in sorted(train_result.metrics.items()):
+                logger.info(f"  {key} = {value}")
+                writer.write(f"{key} = {value}\n")
 
     # Evaluation
     # To use the best checkpoint model at end, use the aruguments
@@ -348,7 +332,7 @@ def main():
 
     if eval_on_dev:
         logger.info("*** Evaluate ***")
-        results = trainer.evaluate(eval_dataset=initializing_evidence_selctor_datasets["validation"])
+        results = trainer.evaluate(initializing_evidence_selctor_datasets["validation"])
         fulleval_results = trainer.evaluate_with_explicit_reader(evidence_reader, datasets["validation"], pprepare_features_for_reading_evidence,
                                                                  evidence_generating_datasets["validation"])
 
@@ -363,7 +347,7 @@ def main():
     if eval_on_test:
         logger.info("*** Test ***")
 
-        results = trainer.evaluate(eval_dataset=initializing_evidence_selctor_datasets["test"])
+        results = trainer.evaluate(initializing_evidence_selctor_datasets["test"])
         fulleval_results = trainer.evaluate_with_explicit_reader(evidence_reader, datasets["test"], pprepare_features_for_reading_evidence,
                                                                  evidence_generating_datasets["test"])
 

@@ -304,7 +304,7 @@ def main():
                 for j in range(0, sent_num, training_args.eval_batch_size):
                     batch_start = j
                     batch_end = j + training_args.eval_batch_size if j < sent_num - training_args.eval_batch_size else sent_num
-                    batched_sent_bound = torch.stack((one_example_sent_bounds[batch_start: batch_end,1],
+                    batched_sent_bound = torch.stack((one_example_sent_bounds[batch_start: batch_end, 1],
                                                       one_example_sent_bounds[batch_start: batch_end, 2])).unsqueeze(1).permute(2, 1, 0)
 
                     batched_attention_mask = one_example_attention_mask.unsqueeze(0).expand(batch_end - batch_start, -1,
