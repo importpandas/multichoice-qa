@@ -357,7 +357,7 @@ class Trainer:
                         # Do not waste multiple GPUs when self.distributed_eval_data_split is False
                         if self.evaluate_during_training and self.world_size == 1:
                             with self.timer['cv']:
-                                results = self.evaluate(self.eval_dataset).metrics
+                                results = self.evaluate(self.eval_dataset)
                             for key, value in results.items():
                                 logger.info(f'step{global_step} eval_{key}: {value}')
                                 metrics[f'step{global_step} eval_{key}'] = value
