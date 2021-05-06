@@ -427,7 +427,7 @@ class Trainer:
 
         batch_size = eval_dataloader.batch_size
         num_examples = len(eval_dataloader.dataset)
-        logger.info("***** Running evaluation {} *****".format(description))
+        logger.info("***** Running {} *****".format(description))
         logger.info("  Num examples = %d", len(dataset))
         logger.info("  Batch size = %d", self.args.eval_batch_size)
         losses_host: torch.Tensor = None
@@ -503,7 +503,6 @@ class Trainer:
             metric_key_prefix="fulleval"
     ):
         evidence_reader = evidence_reader.to(self.args.device)
-        evidence_reader = self._wrap_model(evidence_reader, training=False)
 
         evidence_reading_data_collator = DataCollatorForMultipleChoice(tokenizer=self.tokenizer)
 
@@ -523,10 +522,6 @@ class Trainer:
             processed_datasets,
             data_collator=evidence_reading_data_collator,
             description="Evaluation",
-            # No point gathering the predictions if there are no metrics, otherwise we defer to
-            # self.args.prediction_loss_only
-            prediction_loss_only=True if self.compute_metrics is None else None,
-            ignore_keys=None,
             metric_key_prefix=metric_key_prefix,
         )
         self.model = evidence_generator
@@ -580,7 +575,7 @@ class Trainer:
                                                                       collections.abc.Sized):
             raise ValueError("eval_dataset must implement __len__")
 
-        evidence_selector = self._wrap_model(self.model, training=False)
+        evidence_selector = self._wrap_model(self.model)
 
         eval_sampler = SequentialSampler(evidence_generating_dataset)
 
