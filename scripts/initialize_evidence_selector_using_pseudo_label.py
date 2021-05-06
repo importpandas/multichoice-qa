@@ -338,12 +338,11 @@ def main():
 
         metrics = {**results, **fulleval_results}
         output_eval_file = os.path.join(training_args.output_dir, "eval_results.txt")
-        if trainer.is_world_process_zero():
-            with open(output_eval_file, "w") as writer:
-                logger.info("***** Eval results *****")
-                for key, value in sorted(metrics.items()):
-                    logger.info(f"  {key} = {value}")
-                    writer.write(f"{key} = {value}\n")
+        with open(output_eval_file, "w") as writer:
+            logger.info("***** Eval results *****")
+            for key, value in sorted(metrics.items()):
+                logger.info(f"  {key} = {value}")
+                writer.write(f"{key} = {value}\n")
     if eval_on_test:
         logger.info("*** Test ***")
 
@@ -353,12 +352,11 @@ def main():
 
         metrics = {**results, **fulleval_results}
         output_test_file = os.path.join(training_args.output_dir, "test_results.txt")
-        if trainer.is_world_process_zero():
-            with open(output_test_file, "w") as writer:
-                logger.info("***** Test results *****")
-                for key, value in sorted(metrics.items()):
-                    logger.info(f"  {key} = {value}")
-                    writer.write(f"{key} = {value}\n")
+        with open(output_test_file, "w") as writer:
+            logger.info("***** Test results *****")
+            for key, value in sorted(metrics.items()):
+                logger.info(f"  {key} = {value}")
+                writer.write(f"{key} = {value}\n")
 
 
 def _mp_fn(index):
