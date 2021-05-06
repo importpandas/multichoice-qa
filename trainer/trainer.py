@@ -358,11 +358,11 @@ class Trainer:
                         if self.evaluate_during_training and self.world_size == 1:
                             with self.timer['cv']:
                                 results = self.evaluate(self.eval_dataset)
-                            for key, value in results.items():
+                            for key, value in results.metrics.items():
                                 logger.info(f'step{global_step} eval_{key}: {value}')
                                 metrics[f'step{global_step} eval_{key}'] = value
 
-                            _current_eval_acc = max([value for key, value in results.items() if 'acc' in key])
+                            _current_eval_acc = max([value for key, value in results.metrics.items() if 'acc' in key])
                             if best_eval_acc < _current_eval_acc:
                                 best_eval_acc = _current_eval_acc
                                 if self.rank == 0:
@@ -493,7 +493,7 @@ class Trainer:
             if not key.startswith(f"{metric_key_prefix}_"):
                 metrics[f"{metric_key_prefix}_{key}"] = metrics.pop(key)
 
-        return PredictionOutput(predictions=preds, label_ids=label_ids, metrics=metrics).metrics
+        return PredictionOutput(predictions=preds, label_ids=label_ids, metrics=metrics)
 
     def evidence_reading(
             self,
@@ -529,7 +529,7 @@ class Trainer:
         n_samples = len(processed_datasets)
         output.metrics.update(speed_metrics(metric_key_prefix, start_time, n_samples))
 
-        return output
+        return output.metrics
 
     def evaluate_with_explicit_reader(
             self,
@@ -610,7 +610,7 @@ class Trainer:
         for evidence_len in [2, 3, 4]:
             pprepare_feature_func = partial(prepare_feature_func, evidence_len=evidence_len, evidence_logits=evidence_logits)
             output = self.evidence_reading(evidence_reader, eval_dataset,  pprepare_feature_func, metric_key_prefix=f'fulleval{evidence_len}')
-            metrics = {**metrics, **output.metrics}
+            metrics = {**metrics, **output}
 
         return metrics
         # return output.metrics

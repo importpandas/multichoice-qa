@@ -332,31 +332,31 @@ def main():
 
     if eval_on_dev:
         logger.info("*** Evaluate ***")
-        results = trainer.evaluate(initializing_evidence_selctor_datasets["validation"])
+        results = trainer.evaluate(initializing_evidence_selctor_datasets["validation"]).metrics
         fulleval_results = trainer.evaluate_with_explicit_reader(evidence_reader, datasets["validation"], pprepare_features_for_reading_evidence,
                                                                  evidence_generating_datasets["validation"])
 
-        results = {**results, **fulleval_results}
+        metrics = {**results, **fulleval_results}
         output_eval_file = os.path.join(training_args.output_dir, "eval_results.txt")
         if trainer.is_world_process_zero():
             with open(output_eval_file, "w") as writer:
                 logger.info("***** Eval results *****")
-                for key, value in sorted(results.items()):
+                for key, value in sorted(metrics.items()):
                     logger.info(f"  {key} = {value}")
                     writer.write(f"{key} = {value}\n")
     if eval_on_test:
         logger.info("*** Test ***")
 
-        results = trainer.evaluate(initializing_evidence_selctor_datasets["test"])
+        results = trainer.evaluate(initializing_evidence_selctor_datasets["test"]).metrics
         fulleval_results = trainer.evaluate_with_explicit_reader(evidence_reader, datasets["test"], pprepare_features_for_reading_evidence,
                                                                  evidence_generating_datasets["test"])
 
-        results = {**results, **fulleval_results}
+        metrics = {**results, **fulleval_results}
         output_test_file = os.path.join(training_args.output_dir, "test_results.txt")
         if trainer.is_world_process_zero():
             with open(output_test_file, "w") as writer:
                 logger.info("***** Test results *****")
-                for key, value in sorted(results.items()):
+                for key, value in sorted(metrics.items()):
                     logger.info(f"  {key} = {value}")
                     writer.write(f"{key} = {value}\n")
 
