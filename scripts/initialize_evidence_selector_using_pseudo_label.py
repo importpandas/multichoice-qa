@@ -216,7 +216,7 @@ def main():
         raise ValueError("Dataset should be race or dream.")
     else:
         if data_args.dataset == 'race':
-            from utils.utils_race import prepare_features_for_initializing_evidence_selctor, \
+            from utils.utils_race import prepare_features_for_initializing_simple_evidence_selctor, \
                 prepare_features_for_generating_evidence_using_selector, prepare_features_for_reading_evidence
         if data_args.dataset == 'dream':
             pass
@@ -267,7 +267,7 @@ def main():
     else:
         column_names = datasets["validation"].column_names
 
-    pprepare_features_for_initializing_evidence_selctor = partial(prepare_features_for_initializing_evidence_selctor, evidence_len=data_args.evidence_len,
+    pprepare_features_for_initializing_evidence_selctor = partial(prepare_features_for_initializing_simple_evidence_selctor, evidence_len=data_args.evidence_len,
                                 tokenizer=tokenizer, data_args=data_args, pseudo_label_path=data_args.pseudo_label_path)
     initializing_evidence_selctor_datasets = datasets.map(
         pprepare_features_for_initializing_evidence_selctor,
@@ -286,7 +286,7 @@ def main():
         load_from_cache_file=not data_args.overwrite_cache,
     ) for k in datasets.keys() if k != "train"}
 
-    pprepare_features_for_reading_evidence = partial(prepare_features_for_reading_evidence, tokenizer=tokenizer, data_args=data_args)
+    pprepare_features_for_reading_evidence = partial(prepare_features_for_reading_evidence, pseudo_label_or_not=False, tokenizer=tokenizer, data_args=data_args)
 
 
 

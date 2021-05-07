@@ -598,16 +598,17 @@ class Trainer:
                     "token_type_ids": batch['token_type_ids'].to(self.args.device),
                 }
                 logits = evidence_selector(**inputs).logits.detach().cpu()
+            probs = torch.softmax(logits, dim=-1)
             example_ids = batch['example_ids']
             sent_idxs = batch['sent_idx']
 
             for i, (example_id, sent_idx) in enumerate(zip(example_ids, sent_idxs)):
                 if example_id not in evidence_logits.keys():
                     evidence_logits[example_id] = {}
-                evidence_logits[example_id][sent_idx] = logits[i][1].item()
+                evidence_logits[example_id][sent_idx] = probs[i][1].item()
 
         metrics = {}
-        for evidence_len in [2, 3, 4]:
+        for evidence_len in [1, 2, 3, 4, 5]:
             pprepare_feature_func = partial(prepare_feature_func, evidence_len=evidence_len, evidence_logits=evidence_logits)
             output = self.evidence_reading(evidence_reader, eval_dataset,  pprepare_feature_func, metric_key_prefix=f'fulleval{evidence_len}')
             metrics = {**metrics, **output}

@@ -175,87 +175,8 @@ def prepare_features_for_generate_pseudo_label(examples, tokenizer=None, data_ar
     # Un-flatten
     return features
 
-# Preprocessing the datasets.
-def prepare_features_for_using_pseudo_label_as_evidence(examples, evidence_len=2, tokenizer=None, data_args=None, pseudo_label_path=""):
-    contexts = examples['article']
-    answers = examples['answer']
-    options = examples['options']
-    questions = examples['question']
-    example_ids = examples['example_id']
-    sent_starts = examples['article_sent_start']
 
-    all_pseudo_label = load_pseudo_label(pseudo_label_path)
-
-    pseudo_logit = all_pseudo_label['logit']
-    acc = all_pseudo_label['acc']
-
-    qa_list = []
-    labels = []
-    processed_contexts = []
-
-    for i in range(len(answers)):
-        example_id = example_ids[i]
-        label = ord(answers[i]) - ord("A")
-        labels.append(label)
-        full_context = contexts[i]
-
-
-        evidence_len = evidence_len if evidence_len <= len(pseudo_logit[example_id]) else len(pseudo_logit[example_id])
-        if data_args.filter_label_with_ground_truth:
-            per_example_evidence_sent_idxs = sorted(pseudo_logit[example_id].keys(),
-                                                    key=lambda x: pseudo_logit[example_id][x], reverse=True)[: evidence_len]
-        else:
-            per_example_evidence_sent_idxs = sorted(pseudo_logit[example_id].keys(),
-                                                    key=lambda x: abs(pseudo_logit[example_id][x]), reverse=True)[: evidence_len]
-        per_example_sent_starts = sent_starts[i]
-        per_example_sent_starts.append(len(full_context))
-
-        processed_context = ""
-        for evidence_sent_idx in per_example_evidence_sent_idxs:
-            sent_start = per_example_sent_starts[evidence_sent_idx]
-            sent_end = per_example_sent_starts[evidence_sent_idx + 1]
-            evidence_sent = full_context[sent_start: sent_end]
-            processed_context += evidence_sent
-
-        question = process_text(questions[i])
-        qa_pairs = []
-        for j in range(4):
-            option = process_text(options[i][j])
-
-            if "_" in question:
-                qa_cat = question.replace("_", option)
-            else:
-                qa_cat = " ".join([question, option])
-            #truncated_qa_cat = tokenizer.tokenize(qa_cat, add_special_tokens=False, max_length=data_args.max_qa_length)
-            qa_cat = " ".join(whitespace_tokenize(qa_cat)[- data_args.max_qa_length:])
-            qa_pairs.append(qa_cat)
-        qa_list.append(qa_pairs)
-
-        processed_contexts.append([processed_context] * 4)
-
-    first_sentences = sum(processed_contexts, [])
-    second_sentences = sum(qa_list, [])
-
-
-
-    tokenized_examples = tokenizer(
-        first_sentences,
-        second_sentences,
-        truncation="only_first",
-        max_length=data_args.max_seq_length,
-        padding="max_length" if data_args.pad_to_max_length else False,
-    )
-
-
-
-
-    tokenized_examples = {k: [v[i: i + 4] for i in range(0, len(v), 4)] for k, v in tokenized_examples.items()}
-    tokenized_examples['label'] = labels
-
-    # Un-flatten
-    return tokenized_examples
-
-def prepare_features_for_initializing_evidence_selctor(examples, evidence_len=2, tokenizer=None, data_args=None, pseudo_label_path=""):
+def prepare_features_for_initializing_simple_evidence_selctor(examples, evidence_len=2, tokenizer=None, data_args=None, pseudo_label_path=""):
     contexts = examples['article']
     answers = examples['answer']
     options = examples['options']
@@ -375,7 +296,7 @@ def prepare_features_for_generating_evidence_using_selector(examples, tokenizer=
     # Un-flatten
     return tokenized_examples
 
-def prepare_features_for_reading_evidence(examples, evidence_logits, evidence_len=2, tokenizer=None, data_args=None):
+def prepare_features_for_reading_evidence(examples, evidence_logits=None, pseudo_label_or_not=True, evidence_len=2, tokenizer=None, data_args=None):
     contexts = examples['article']
     answers = examples['answer']
     options = examples['options']
@@ -389,24 +310,31 @@ def prepare_features_for_reading_evidence(examples, evidence_logits, evidence_le
 
     for i in range(len(answers)):
         full_context = contexts[i]
-        evidence_concat = ""
+        example_id = example_ids[i]
+        label = ord(answers[i]) - ord("A")
+        labels.append(label)
 
-        per_example_evidence_logits = evidence_logits[example_ids[i]]
+        per_example_evidence_logits = evidence_logits[example_id]
         per_example_sent_starts = sent_starts[i]
         per_example_sent_starts.append(len(full_context))
 
-        per_example_evidence_sent_idxs = sorted([idx for (idx, logit) in
-                                sorted(per_example_evidence_logits.items(), key=lambda x: x[1])[-evidence_len: ]])
 
+        evidence_len = evidence_len if evidence_len <= len(evidence_logits[example_id]) else len(evidence_logits[example_id])
+        if data_args.filter_label_with_ground_truth or not pseudo_label_or_not:
+            per_example_evidence_sent_idxs = sorted(per_example_evidence_logits.keys(),
+                                                    key=lambda x: per_example_evidence_logits[x], reverse=True)[
+                                             : evidence_len]
+        else:
+            per_example_evidence_sent_idxs = sorted(per_example_evidence_logits.keys(),
+                                                    key=lambda x: abs(per_example_evidence_logits[x]), reverse=True)[
+                                             : evidence_len]
 
-
+        evidence_concat = ""
         for evidence_sent_idx in per_example_evidence_sent_idxs:
             sent_start = per_example_sent_starts[evidence_sent_idx]
             sent_end = per_example_sent_starts[evidence_sent_idx + 1]
             evidence_concat += full_context[sent_start: sent_end]
 
-        label = ord(answers[i]) - ord("A")
-        labels.append(label)
         processed_contexts.append([evidence_concat] * 4)
 
         question = process_text(questions[i])
@@ -432,8 +360,8 @@ def prepare_features_for_reading_evidence(examples, evidence_logits, evidence_le
         max_length=data_args.max_seq_length,
         padding="max_length" if data_args.pad_to_max_length else False,
     )
-    tokenized_examples = {k: [v[i: i + 4] for i in range(0, len(v), 4)] for k, v in tokenized_examples.items()}
 
+    tokenized_examples = {k: [v[i: i + 4] for i in range(0, len(v), 4)] for k, v in tokenized_examples.items()}
     tokenized_examples['label'] = labels
 
     # Un-flatten

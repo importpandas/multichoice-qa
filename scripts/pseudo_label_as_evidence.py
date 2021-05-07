@@ -45,6 +45,7 @@ from utils.utils_distributed_training import is_main_process
 
 from utils.hyperparam import hyperparam_path_for_initializing_evidence_selector
 from utils.initialization import setup_root_logger
+from utils.utils_race import load_pseudo_label
 
 logger = logging.getLogger(__name__)
 
@@ -276,7 +277,7 @@ def main():
         raise ValueError("Dataset should be race or dream.")
     else:
         if data_args.dataset == 'race':
-            from utils.utils_race import prepare_features_for_using_pseudo_label_as_evidence
+            from utils.utils_race import prepare_features_for_reading_evidence
         if data_args.dataset == 'dream':
             pass
 
@@ -318,8 +319,14 @@ def main():
     else:
         column_names = datasets["validation"].column_names
 
-    pprepare_features_for_using_pseudo_label_as_evidence = partial(prepare_features_for_using_pseudo_label_as_evidence, evidence_len=data_args.evidence_len,
-                                tokenizer=tokenizer, data_args=data_args, pseudo_label_path=data_args.pseudo_label_path)
+
+    all_pseudo_label = load_pseudo_label(data_args.pseudo_label_path)
+
+    pseudo_logit = all_pseudo_label['logit']
+    acc = all_pseudo_label['acc']
+
+    pprepare_features_for_using_pseudo_label_as_evidence = partial(prepare_features_for_reading_evidence, evidence_logits=pseudo_logit, evidence_len=data_args.evidence_len,
+                                tokenizer=tokenizer, data_args=data_args)
     tokenized_datasets = datasets.map(
         pprepare_features_for_using_pseudo_label_as_evidence,
         batched=True,
