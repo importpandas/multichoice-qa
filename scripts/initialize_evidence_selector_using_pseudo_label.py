@@ -63,6 +63,10 @@ class ModelArguments:
     evidence_reader_path: str = field(
         metadata={"help": "Path to pretrained MRC system 2 for answering questions using evidence"}
     )
+    evidence_selector_type: Optional[str] = field(
+        default="simple",
+        metadata={"help": "Model type of evidence selector, 'simple' or 'complex'"}
+    )
     config_name: Optional[str] = field(
         default=None, metadata={"help": "Pretrained config name or path if not the same as model_name"}
     )
@@ -89,6 +93,10 @@ class DataTrainingArguments:
     )
     filter_label_with_ground_truth: bool = field(
         default=True,
+        metadata={"help": "Whether to use pseudo label filtered by ground truth"},
+    )
+    train_with_adversarial_examples: bool = field(
+        default=False,
         metadata={"help": "Whether to use pseudo label filtered by ground truth"},
     )
     train_file: Optional[str] = field(default=None, metadata={"help": "The input training data file (a text file)."})
@@ -216,7 +224,8 @@ def main():
         raise ValueError("Dataset should be race or dream.")
     else:
         if data_args.dataset == 'race':
-            from utils.utils_race import prepare_features_for_initializing_simple_evidence_selctor, \
+            from utils.utils_race import prepare_features_for_initializing_simple_evidence_selector, \
+                prepare_features_for_initializing_complex_evidence_selector, \
                 prepare_features_for_generating_evidence_using_selector, prepare_features_for_reading_evidence
         if data_args.dataset == 'dream':
             pass
@@ -242,6 +251,8 @@ def main():
         model_args.config_name if model_args.config_name else model_args.model_name_or_path,
         cache_dir=model_args.cache_dir,
     )
+    if data_args.train_with_adversarial_examples:
+        config.num_labels = 3
     tokenizer = AutoTokenizer.from_pretrained(
         model_args.tokenizer_name if model_args.tokenizer_name else model_args.model_name_or_path,
         cache_dir=model_args.cache_dir,
@@ -266,11 +277,17 @@ def main():
         column_names = datasets["train"].column_names
     else:
         column_names = datasets["validation"].column_names
-
-    pprepare_features_for_initializing_evidence_selctor = partial(prepare_features_for_initializing_simple_evidence_selctor, evidence_len=data_args.evidence_len,
-                                tokenizer=tokenizer, data_args=data_args, pseudo_label_path=data_args.pseudo_label_path)
+    if model_args.evidence_selector_type == "simple":
+        pprepare_features_for_initializing_evidence_selector = partial(prepare_features_for_initializing_simple_evidence_selector, evidence_len=data_args.evidence_len,
+                                    tokenizer=tokenizer, data_args=data_args, pseudo_label_path=data_args.pseudo_label_path)
+    elif model_args.evidence_selector_type == "complex" :
+        data_args.max_seq_length = 512
+        pprepare_features_for_initializing_evidence_selector = partial(prepare_features_for_initializing_complex_evidence_selector,
+                                    tokenizer=tokenizer, data_args=data_args, pseudo_label_path=data_args.pseudo_label_path)
+    else:
+        raise ValueError("evidence_selector_type should be simple or complex")
     initializing_evidence_selctor_datasets = datasets.map(
-        pprepare_features_for_initializing_evidence_selctor,
+        pprepare_features_for_initializing_evidence_selector,
         batched=True,
         num_proc=data_args.preprocessing_num_workers,
         remove_columns=column_names,

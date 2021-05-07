@@ -176,7 +176,93 @@ def prepare_features_for_generate_pseudo_label(examples, tokenizer=None, data_ar
     return features
 
 
-def prepare_features_for_initializing_simple_evidence_selctor(examples, evidence_len=2, tokenizer=None, data_args=None, pseudo_label_path=""):
+def prepare_features_for_initializing_complex_evidence_selector(examples, tokenizer=None, data_args=None, pseudo_label_path=""):
+    contexts = examples['article']
+    answers = examples['answer']
+    options = examples['options']
+    questions = examples['question']
+    example_ids = examples['example_id']
+    sent_starts = examples['article_sent_start']
+
+    all_pseudo_label = load_pseudo_label(pseudo_label_path)
+
+    pseudo_logit = all_pseudo_label['logit']
+    acc = all_pseudo_label['acc']
+
+
+    features = {}
+    features['input_ids'] = []
+    features['attention_mask'] = []
+    features['token_type_ids'] = []
+    features['sent_label'] = []
+
+    for i in range(len(answers)):
+
+
+        #processed_contexts.append([process_text(contexts[i])] * 4)
+        processed_context = contexts[i]
+        example_id = example_ids[i]
+        question = process_text(questions[i])
+        per_example_sent_starts = sent_starts[i]
+        per_example_sent_ends = [char_idx for char_idx in per_example_sent_starts[1:]] + [len(processed_context) - 1]
+
+        choices_inputs = []
+        all_text_b = []
+        all_text_b_len = []
+        for j in range(4):
+            option = process_text(options[i][j])
+
+            if "_" in question:
+                qa_cat = question.replace("_", option)
+            else:
+                qa_cat = " ".join([question, option])
+            #truncated_qa_cat = tokenizer.tokenize(qa_cat, add_special_tokens=False, max_length=data_args.max_qa_length)
+            truncated_text_b_id = tokenizer.encode(qa_cat, truncation=True, max_length=data_args.max_qa_length, add_special_tokens=False)
+            truncated_text_b = tokenizer.decode(truncated_text_b_id, clean_up_tokenization_spaces=False)
+            all_text_b.append(truncated_text_b)
+            all_text_b_len.append(len(tokenizer.encode(truncated_text_b, add_special_tokens=False)))
+
+        for j in range(4):
+            text_b = all_text_b[j] + tokenizer.pad_token * (max(all_text_b_len) - all_text_b_len[j])
+
+            inputs = tokenizer(
+                processed_context,
+                text_b,
+                add_special_tokens=True,
+                max_length=data_args.max_seq_length,
+                padding="max_length" if data_args.pad_to_max_length else False,
+                truncation='only_first',
+                stride=data_args.max_seq_length - 3 - 128 - max(all_text_b_len),
+                return_overflowing_tokens=True,
+                )
+            choices_inputs.append(inputs)
+        assert len(set([len(x["input_ids"]) for x in choices_inputs])) == 1
+
+        #per_example_feature_num = len(choices_inputs[0]["input_ids"])
+        for j in range(1):
+            input_ids = [x["input_ids"][j] for x in choices_inputs]
+            attention_mask = [x["attention_mask"][j] for x in choices_inputs]
+            token_type_ids = [x["token_type_ids"][j] for x in choices_inputs]
+            sent_bound_token = []
+            for sent_idx, (sent_start, sent_end) in enumerate(zip(per_example_sent_starts, per_example_sent_ends)):
+                if not (choices_inputs[0].char_to_token(j, sent_start) and choices_inputs[0].char_to_token(j, sent_end)):
+                    continue
+                if sent_idx != len(per_example_sent_starts) - 1:
+                    sent_bound_token.append((sent_idx, pseudo_logit[example_id][sent_idx],
+                        choices_inputs[0].char_to_token(j, sent_start), choices_inputs[0].char_to_token(j, sent_end) - 1))
+                else:
+                    sent_bound_token.append((sent_idx, pseudo_logit[example_id][sent_idx],
+                        choices_inputs[0].char_to_token(j, sent_start), choices_inputs[0].char_to_token(j, sent_end)))
+            features['input_ids'].append(input_ids)
+            features['attention_mask'].append(attention_mask)
+            features['token_type_ids'].append(token_type_ids)
+            features['sent_label'].append(sent_bound_token)
+
+    # Un-flatten
+    return features
+
+
+def prepare_features_for_initializing_simple_evidence_selector(examples, evidence_len=2, tokenizer=None, data_args=None, pseudo_label_path=""):
     contexts = examples['article']
     answers = examples['answer']
     options = examples['options']
@@ -207,6 +293,12 @@ def prepare_features_for_initializing_simple_evidence_selctor(examples, evidence
         if data_args.filter_label_with_ground_truth:
             per_example_evidence_sent_idxs = sorted(pseudo_logit[example_id].keys(),
                                                     key=lambda x: pseudo_logit[example_id][x], reverse=True)[: evidence_len]
+            if data_args.train_with_adversarial_examples:
+                per_example_noise_sent_idxs = sorted(pseudo_logit[example_id].keys(),
+                                                        key=lambda x: pseudo_logit[example_id][x])[
+                                                 : evidence_len]
+            else:
+                per_example_noise_sent_idxs = []
         else:
             per_example_evidence_sent_idxs = sorted(pseudo_logit[example_id].keys(),
                                                     key=lambda x: abs(pseudo_logit[example_id][x]), reverse=True)[: evidence_len]
@@ -221,7 +313,16 @@ def prepare_features_for_initializing_simple_evidence_selctor(examples, evidence
             qa_list.append(qa_concat)
             labels.append(1)
 
-        all_irre_sent_idxs = list(filter(lambda x: x not in per_example_evidence_sent_idxs, list(range(len(per_example_sent_starts) - 1))))
+        for evidence_sent_idx in per_example_noise_sent_idxs:
+            sent_start = per_example_sent_starts[evidence_sent_idx]
+            sent_end = per_example_sent_starts[evidence_sent_idx + 1]
+            evidence_sent = full_context[sent_start: sent_end]
+            processed_contexts.append(evidence_sent)
+            qa_list.append(qa_concat)
+            labels.append(2)
+
+        all_irre_sent_idxs = list(filter(lambda x: x not in per_example_evidence_sent_idxs and x not in per_example_noise_sent_idxs,
+                                         list(range(len(per_example_sent_starts) - 1))))
         negative_sent_num = evidence_len if evidence_len <= len(all_irre_sent_idxs) else len(all_irre_sent_idxs)
         for irre_sent_idx in random.sample(all_irre_sent_idxs, negative_sent_num):
             sent_start = per_example_sent_starts[irre_sent_idx]
