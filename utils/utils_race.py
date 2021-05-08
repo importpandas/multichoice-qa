@@ -38,6 +38,9 @@ def process_text(inputs, remove_space=True, lower=False):
 
     outputs = unicodedata.normalize("NFKD", outputs)
     outputs = "".join([c for c in outputs if not unicodedata.combining(c)])
+    outputs = outputs.replace("`", "'")
+    outputs = outputs.replace("''", '"')
+
     if lower:
         outputs = outputs.lower()
 
@@ -118,7 +121,7 @@ def prepare_features_for_generate_pseudo_label(examples, tokenizer=None, data_ar
         label = ord(answers[i]) - ord("A")
         question = process_text(questions[i])
         per_example_sent_starts = sent_starts[i]
-        per_example_sent_ends = [char_idx for char_idx in per_example_sent_starts[1:]] + [len(processed_context) - 1]
+        per_example_sent_ends = [char_idx - 1 for char_idx in per_example_sent_starts[1:]] + [len(processed_context) - 1]
 
         choices_inputs = []
         all_text_b = []
@@ -161,10 +164,7 @@ def prepare_features_for_generate_pseudo_label(examples, tokenizer=None, data_ar
             for sent_idx, (sent_start, sent_end) in enumerate(zip(per_example_sent_starts, per_example_sent_ends)):
                 if not (choices_inputs[0].char_to_token(j, sent_start) and choices_inputs[0].char_to_token(j, sent_end)):
                     continue
-                if sent_idx != len(per_example_sent_starts) - 1:
-                    sent_bound_token.append((sent_idx, choices_inputs[0].char_to_token(j, sent_start), choices_inputs[0].char_to_token(j, sent_end) - 1))
-                else:
-                    sent_bound_token.append((sent_idx, choices_inputs[0].char_to_token(j, sent_start), choices_inputs[0].char_to_token(j, sent_end)))
+                sent_bound_token.append((sent_idx, choices_inputs[0].char_to_token(j, sent_start), choices_inputs[0].char_to_token(j, sent_end)))
             features['input_ids'].append(input_ids)
             features['attention_mask'].append(attention_mask)
             features['token_type_ids'].append(token_type_ids)
@@ -204,7 +204,7 @@ def prepare_features_for_initializing_complex_evidence_selector(examples, tokeni
         example_id = example_ids[i]
         question = process_text(questions[i])
         per_example_sent_starts = sent_starts[i]
-        per_example_sent_ends = [char_idx for char_idx in per_example_sent_starts[1:]] + [len(processed_context) - 1]
+        per_example_sent_ends = [char_idx - 1 for char_idx in per_example_sent_starts[1:]] + [len(processed_context) - 1]
 
         choices_inputs = []
         all_text_b = []
@@ -247,12 +247,9 @@ def prepare_features_for_initializing_complex_evidence_selector(examples, tokeni
             for sent_idx, (sent_start, sent_end) in enumerate(zip(per_example_sent_starts, per_example_sent_ends)):
                 if not (choices_inputs[0].char_to_token(j, sent_start) and choices_inputs[0].char_to_token(j, sent_end)):
                     continue
-                if sent_idx != len(per_example_sent_starts) - 1:
-                    sent_bound_token.append((sent_idx, pseudo_logit[example_id][sent_idx],
-                        choices_inputs[0].char_to_token(j, sent_start), choices_inputs[0].char_to_token(j, sent_end) - 1))
-                else:
-                    sent_bound_token.append((sent_idx, pseudo_logit[example_id][sent_idx],
-                        choices_inputs[0].char_to_token(j, sent_start), choices_inputs[0].char_to_token(j, sent_end)))
+                sent_bound_token.append((sent_idx, pseudo_logit[example_id][sent_idx],
+                                         choices_inputs[0].char_to_token(j, sent_start), choices_inputs[0].char_to_token(j, sent_end)))
+
             features['input_ids'].append(input_ids)
             features['attention_mask'].append(attention_mask)
             features['token_type_ids'].append(token_type_ids)

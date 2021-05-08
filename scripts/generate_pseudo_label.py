@@ -312,7 +312,7 @@ def main():
 
                     pos_matrix = torch.arange(batched_attention_mask.size()[-1], device=device).view(1, 1, -1)
                     if_in_sent = torch.logical_and(batched_sent_bound[:,:,0].unsqueeze(-1) <= pos_matrix,
-                                                   pos_matrix < batched_sent_bound[:,:,1].unsqueeze(-1))
+                                                   pos_matrix <= batched_sent_bound[:,:,1].unsqueeze(-1))
 
                     batched_attention_mask = torch.where(if_in_sent, torch.tensor((0), device=device), batched_attention_mask)
                     batched_input_ids = one_example_input_ids.expand(batch_end - batch_start, -1, -1).contiguous()

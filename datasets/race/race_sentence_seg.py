@@ -32,7 +32,7 @@ nlp = spacy.load("en_core_web_sm")
 
 
 class Race(datasets.GeneratorBasedBuilder):
-    """ReAding Comprehension Dataset From Examination dataset from CMU"""
+    """Reading Comprehension Dataset From Examination dataset from CMU"""
 
     VERSION = datasets.Version("0.1.0")
 
