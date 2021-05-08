@@ -94,6 +94,28 @@ def prepare_features(examples, tokenizer=None, data_args=None):
     return tokenized_examples
 
 
+def get_orig_chars_to_bounded_chars_mapping(tokens_char_span, total_len):
+    all_chars_to_start_chars = []
+    all_chars_to_end_chars = []
+
+    prev_token_end_char = 0
+
+    for token_start_char, token_end_char in tokens_char_span:
+        if prev_token_end_char == token_end_char:
+            continue
+        token_start_char = prev_token_end_char if token_start_char < prev_token_end_char else token_start_char
+        all_chars_to_start_chars += [token_start_char] * (token_end_char - prev_token_end_char)
+        all_chars_to_end_chars += [prev_token_end_char - 1] * (token_start_char - prev_token_end_char)
+        all_chars_to_end_chars += [token_start_char] * (token_end_char - token_start_char)
+        prev_token_end_char = token_end_char
+
+    if prev_token_end_char != total_len:
+        all_chars_to_start_chars += [prev_token_end_char - 1] * (total_len - prev_token_end_char)
+        all_chars_to_end_chars += [prev_token_end_char - 1] * (total_len - prev_token_end_char)
+
+    assert len(all_chars_to_start_chars) == len(all_chars_to_end_chars) == total_len
+    return all_chars_to_start_chars, all_chars_to_end_chars
+
 # Preprocessing the datasets.
 def prepare_features_for_generate_pseudo_label(examples, tokenizer=None, data_args=None):
     contexts = examples['article']
@@ -156,15 +178,20 @@ def prepare_features_for_generate_pseudo_label(examples, tokenizer=None, data_ar
         assert len(set([len(x["input_ids"]) for x in choices_inputs])) == 1
 
         per_example_feature_num = len(choices_inputs[0]["input_ids"])
+
+        tokens_char_span = tokenizer(processed_context, return_offsets_mapping=True, add_special_tokens=False)['offset_mapping']
+        all_chars_to_start_chars, all_chars_to_end_chars = get_orig_chars_to_bounded_chars_mapping(tokens_char_span, len(processed_context))
+
         for j in range(per_example_feature_num):
             input_ids = [x["input_ids"][j] for x in choices_inputs]
             attention_mask = [x["attention_mask"][j] for x in choices_inputs]
             token_type_ids = [x["token_type_ids"][j] for x in choices_inputs]
             sent_bound_token = []
             for sent_idx, (sent_start, sent_end) in enumerate(zip(per_example_sent_starts, per_example_sent_ends)):
-                if not (choices_inputs[0].char_to_token(j, sent_start) and choices_inputs[0].char_to_token(j, sent_end)):
+                new_sent_start, new_sent_end = all_chars_to_start_chars[sent_start], all_chars_to_end_chars[sent_end]
+                if not (choices_inputs[0].char_to_token(j, new_sent_start) and choices_inputs[0].char_to_token(j, new_sent_end)):
                     continue
-                sent_bound_token.append((sent_idx, choices_inputs[0].char_to_token(j, sent_start), choices_inputs[0].char_to_token(j, sent_end)))
+                sent_bound_token.append((sent_idx, choices_inputs[0].char_to_token(j, new_sent_start), choices_inputs[0].char_to_token(j, new_sent_end)))
             features['input_ids'].append(input_ids)
             features['attention_mask'].append(attention_mask)
             features['token_type_ids'].append(token_type_ids)
@@ -238,6 +265,9 @@ def prepare_features_for_initializing_complex_evidence_selector(examples, tokeni
             choices_inputs.append(inputs)
         assert len(set([len(x["input_ids"]) for x in choices_inputs])) == 1
 
+        tokens_char_span = tokenizer(processed_context, return_offsets_mapping=True, add_special_tokens=False)['offset_mapping']
+        all_chars_to_start_chars, all_chars_to_end_chars = get_orig_chars_to_bounded_chars_mapping(tokens_char_span, len(processed_context))
+
         #per_example_feature_num = len(choices_inputs[0]["input_ids"])
         for j in range(1):
             input_ids = [x["input_ids"][j] for x in choices_inputs]
@@ -245,11 +275,12 @@ def prepare_features_for_initializing_complex_evidence_selector(examples, tokeni
             token_type_ids = [x["token_type_ids"][j] for x in choices_inputs]
             sent_bound_token = []
             for sent_idx, (sent_start, sent_end) in enumerate(zip(per_example_sent_starts, per_example_sent_ends)):
-                if not (choices_inputs[0].char_to_token(j, sent_start) and choices_inputs[0].char_to_token(j, sent_end)):
+                new_sent_start, new_sent_end = all_chars_to_start_chars[sent_start], all_chars_to_end_chars[sent_end]
+                if not (choices_inputs[0].char_to_token(j, new_sent_start) and choices_inputs[0].char_to_token(j, new_sent_end)):
                     continue
                 sent_bound_token.append((sent_idx, pseudo_logit[example_id][sent_idx],
-                                         choices_inputs[0].char_to_token(j, sent_start), choices_inputs[0].char_to_token(j, sent_end)))
-
+                                         choices_inputs[0].char_to_token(j, new_sent_start),
+                                         choices_inputs[0].char_to_token(j, new_sent_end)))
             features['input_ids'].append(input_ids)
             features['attention_mask'].append(attention_mask)
             features['token_type_ids'].append(token_type_ids)
