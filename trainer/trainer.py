@@ -40,6 +40,7 @@ from transformers.trainer_pt_utils import (
     nested_numpify
 )
 from transformers.trainer_utils import EvalPrediction, denumpify_detensorize, PredictionOutput, speed_metrics, TrainOutput
+from model.evidence_selector import AlbertForEvidenceSelection
 
 _is_native_amp_available = False
 if version.parse(torch.__version__) >= version.parse("1.6"):
@@ -151,6 +152,8 @@ class Trainer:
         Prepare :obj:`inputs` before feeding them to the model, converting them to tensors if they are not already and
         handling potential state.
         """
+        if 'example_ids' in inputs.keys():
+            _ = inputs.pop('example_ids')
         for k, v in inputs.items():
             if isinstance(v, torch.Tensor):
                 inputs[k] = v.to(self.args.device)
@@ -319,7 +322,7 @@ class Trainer:
         # Check if continuing training from a checkpoint
 
         tr_loss, logging_loss = 0.0, 0.0
-        best_eval_acc = 0.0
+        best_eval_acc = -10000.0
 
         model = self._wrap_model(self.model)
         metrics = {}
@@ -333,7 +336,7 @@ class Trainer:
             self.optimizer.zero_grad()  # drop last
             for step, batch in enumerate(train_dataloader):
                 # Skip past any already trained steps if resuming training
-
+                #torch.autograd.set_detect_anomaly(True)
                 with self.timer['gpu']:
                     loss = self.training_step(model, batch)  # backward in local machine
                 tr_loss += loss.item()
@@ -362,7 +365,9 @@ class Trainer:
                                 logger.info(f'step{global_step} eval_{key}: {value}')
                                 metrics[f'step{global_step} eval_{key}'] = value
 
-                            _current_eval_acc = max([value for key, value in results.metrics.items() if 'acc' in key])
+                            _current_eval_acc = max([value for key, value in results.metrics.items() if 'acc' in key]) \
+                                            if [value for key, value in results.metrics.items() if 'acc' in key] else  \
+                                            max([-value for key, value in results.metrics.items() if 'loss' in key])
                             if best_eval_acc < _current_eval_acc:
                                 best_eval_acc = _current_eval_acc
                                 if self.rank == 0:
@@ -537,6 +542,7 @@ class Trainer:
             eval_dataset,
             prepare_feature_func,
             evidence_generating_dataset,
+            evidence_generating_data_collator=None,
             ignore_keys: Optional[List[str]] = None,
     ) -> Dict[str, float]:
         """
@@ -569,7 +575,8 @@ class Trainer:
             dictionary also contains the epoch number which comes from the training state.
         """
         # memory metrics - must set up as early as possible
-        evidence_generating_data_collator = DataCollatorForGeneratingEvidenceUsingSelector(tokenizer=self.tokenizer)
+        evidence_generating_data_collator = DataCollatorForGeneratingEvidenceUsingSelector(tokenizer=self.tokenizer) \
+                                            if evidence_generating_data_collator is None else evidence_generating_data_collator
 
         if evidence_generating_dataset is not None and not isinstance(evidence_generating_dataset,
                                                                       collections.abc.Sized):
@@ -589,23 +596,34 @@ class Trainer:
             pin_memory=self.args.dataloader_pin_memory,
         )
 
+        is_complex_selector = isinstance(evidence_selector, AlbertForEvidenceSelection)
+
         evidence_logits = {}
         for step, batch in enumerate(evidence_generating_dataloader):
             with torch.no_grad():
-                inputs = {
-                    "input_ids": batch['input_ids'].to(self.args.device),
-                    "attention_mask": batch['attention_mask'].to(self.args.device),
-                    "token_type_ids": batch['token_type_ids'].to(self.args.device),
-                }
+                example_ids = batch.pop('example_ids')
+                if not is_complex_selector:
+                    sent_idxs = batch.pop('sent_idx')
+                inputs = self._prepare_inputs(batch)
                 logits = evidence_selector(**inputs).logits.detach().cpu()
-            probs = torch.softmax(logits, dim=-1)
-            example_ids = batch['example_ids']
-            sent_idxs = batch['sent_idx']
 
-            for i, (example_id, sent_idx) in enumerate(zip(example_ids, sent_idxs)):
-                if example_id not in evidence_logits.keys():
-                    evidence_logits[example_id] = {}
-                evidence_logits[example_id][sent_idx] = probs[i][1].item()
+            if not is_complex_selector:
+                probs = torch.softmax(logits, dim=-1)
+
+                for i, (example_id, sent_idx) in enumerate(zip(example_ids, sent_idxs)):
+                    if example_id not in evidence_logits.keys():
+                        evidence_logits[example_id] = {}
+                    evidence_logits[example_id][sent_idx] = probs[i][1].item()
+            else:
+                probs = torch.softmax(logits, dim=-1)
+                sent_idxs = batch['sent_bounds'][:, :, 0].detach().cpu().tolist()
+                for i, (example_id, sent_idx) in enumerate(zip(example_ids, sent_idxs)):
+                    if example_id not in evidence_logits.keys():
+                        evidence_logits[example_id] = {}
+                    for idx in sent_idx:
+                        if idx != -1:
+                            evidence_logits[example_id][idx] = probs[i][idx].item()
+
 
         metrics = {}
         for evidence_len in [1, 2, 3, 4, 5]:

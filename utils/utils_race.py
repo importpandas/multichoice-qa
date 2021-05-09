@@ -211,17 +211,20 @@ def prepare_features_for_initializing_complex_evidence_selector(examples, tokeni
     example_ids = examples['example_id']
     sent_starts = examples['article_sent_start']
 
-    all_pseudo_label = load_pseudo_label(pseudo_label_path)
-
-    pseudo_logit = all_pseudo_label['logit']
-    acc = all_pseudo_label['acc']
+    if pseudo_label_path:
+        all_pseudo_label = load_pseudo_label(pseudo_label_path)
+        pseudo_logit = all_pseudo_label['logit']
+        acc = all_pseudo_label['acc']
 
 
     features = {}
     features['input_ids'] = []
     features['attention_mask'] = []
     features['token_type_ids'] = []
-    features['sent_label'] = []
+    features['sent_bound'] = []
+    if pseudo_label_path:
+        features['label'] = []
+    features['example_ids'] = []
 
     for i in range(len(answers)):
 
@@ -233,58 +236,50 @@ def prepare_features_for_initializing_complex_evidence_selector(examples, tokeni
         per_example_sent_starts = sent_starts[i]
         per_example_sent_ends = [char_idx - 1 for char_idx in per_example_sent_starts[1:]] + [len(processed_context) - 1]
 
-        choices_inputs = []
-        all_text_b = []
-        all_text_b_len = []
+
+        qa_concat = process_text(questions[i])
         for j in range(4):
             option = process_text(options[i][j])
+            qa_concat += " [SEP]"
+            qa_concat += option
+        qa_concat = " ".join(whitespace_tokenize(qa_concat)[- data_args.max_qa_length:])
 
-            if "_" in question:
-                qa_cat = question.replace("_", option)
-            else:
-                qa_cat = " ".join([question, option])
-            #truncated_qa_cat = tokenizer.tokenize(qa_cat, add_special_tokens=False, max_length=data_args.max_qa_length)
-            truncated_text_b_id = tokenizer.encode(qa_cat, truncation=True, max_length=data_args.max_qa_length, add_special_tokens=False)
-            truncated_text_b = tokenizer.decode(truncated_text_b_id, clean_up_tokenization_spaces=False)
-            all_text_b.append(truncated_text_b)
-            all_text_b_len.append(len(tokenizer.encode(truncated_text_b, add_special_tokens=False)))
-
-        for j in range(4):
-            text_b = all_text_b[j] + tokenizer.pad_token * (max(all_text_b_len) - all_text_b_len[j])
-
-            inputs = tokenizer(
-                processed_context,
-                text_b,
-                add_special_tokens=True,
-                max_length=data_args.max_seq_length,
-                padding="max_length" if data_args.pad_to_max_length else False,
-                truncation='only_first',
-                stride=data_args.max_seq_length - 3 - 128 - max(all_text_b_len),
-                return_overflowing_tokens=True,
-                )
-            choices_inputs.append(inputs)
-        assert len(set([len(x["input_ids"]) for x in choices_inputs])) == 1
+        inputs = tokenizer(
+            processed_context,
+            qa_concat,
+            add_special_tokens=True,
+            max_length=data_args.max_seq_length,
+            padding="max_length" if data_args.pad_to_max_length else False,
+            truncation='only_first',
+            return_overflowing_tokens=False,
+            )
 
         tokens_char_span = tokenizer(processed_context, return_offsets_mapping=True, add_special_tokens=False)['offset_mapping']
         all_chars_to_start_chars, all_chars_to_end_chars = get_orig_chars_to_bounded_chars_mapping(tokens_char_span, len(processed_context))
 
-        #per_example_feature_num = len(choices_inputs[0]["input_ids"])
-        for j in range(1):
-            input_ids = [x["input_ids"][j] for x in choices_inputs]
-            attention_mask = [x["attention_mask"][j] for x in choices_inputs]
-            token_type_ids = [x["token_type_ids"][j] for x in choices_inputs]
-            sent_bound_token = []
-            for sent_idx, (sent_start, sent_end) in enumerate(zip(per_example_sent_starts, per_example_sent_ends)):
-                new_sent_start, new_sent_end = all_chars_to_start_chars[sent_start], all_chars_to_end_chars[sent_end]
-                if not (choices_inputs[0].char_to_token(j, new_sent_start) and choices_inputs[0].char_to_token(j, new_sent_end)):
-                    continue
-                sent_bound_token.append((sent_idx, pseudo_logit[example_id][sent_idx],
-                                         choices_inputs[0].char_to_token(j, new_sent_start),
-                                         choices_inputs[0].char_to_token(j, new_sent_end)))
-            features['input_ids'].append(input_ids)
-            features['attention_mask'].append(attention_mask)
-            features['token_type_ids'].append(token_type_ids)
-            features['sent_label'].append(sent_bound_token)
+        input_ids = inputs["input_ids"]
+        attention_mask = inputs["attention_mask"]
+        token_type_ids = inputs["token_type_ids"]
+        sent_bound_token = []
+        if pseudo_label_path:
+            sent_label = []
+        for sent_idx, (sent_start, sent_end) in enumerate(zip(per_example_sent_starts, per_example_sent_ends)):
+            new_sent_start, new_sent_end = all_chars_to_start_chars[sent_start], all_chars_to_end_chars[sent_end]
+            if not (inputs.char_to_token(new_sent_start) and inputs.char_to_token(new_sent_end)):
+                continue
+            sent_bound_token.append((sent_idx,
+                                     inputs.char_to_token(new_sent_start),
+                                     inputs.char_to_token(new_sent_end)))
+            if pseudo_label_path:
+                sent_label.append(pseudo_logit[example_id][sent_idx])
+        features['input_ids'].append(input_ids)
+        features['attention_mask'].append(attention_mask)
+        features['token_type_ids'].append(token_type_ids)
+        features['sent_bound'].append(sent_bound_token)
+        features['example_ids'].append(example_id)
+        if pseudo_label_path:
+            features['label'].append(sent_label)
+
 
     # Un-flatten
     return features

@@ -63,10 +63,6 @@ class ModelArguments:
     evidence_reader_path: str = field(
         metadata={"help": "Path to pretrained MRC system 2 for answering questions using evidence"}
     )
-    evidence_selector_type: Optional[str] = field(
-        default="simple",
-        metadata={"help": "Model type of evidence selector, 'simple' or 'complex'"}
-    )
     config_name: Optional[str] = field(
         default=None, metadata={"help": "Pretrained config name or path if not the same as model_name"}
     )
@@ -277,16 +273,9 @@ def main():
         column_names = datasets["train"].column_names
     else:
         column_names = datasets["validation"].column_names
-    if model_args.evidence_selector_type == "simple":
-        pprepare_features_for_initializing_evidence_selector = partial(prepare_features_for_initializing_simple_evidence_selector, evidence_len=data_args.evidence_len,
-                                    tokenizer=tokenizer, data_args=data_args, pseudo_label_path=data_args.pseudo_label_path)
-    elif model_args.evidence_selector_type == "complex" :
-        data_args.max_seq_length = 512
-        pprepare_features_for_initializing_evidence_selector = partial(prepare_features_for_initializing_complex_evidence_selector,
-                                    tokenizer=tokenizer, data_args=data_args, pseudo_label_path=data_args.pseudo_label_path)
-    else:
-        raise ValueError("evidence_selector_type should be simple or complex")
-    initializing_evidence_selctor_datasets = datasets.map(
+    pprepare_features_for_initializing_evidence_selector = partial(prepare_features_for_initializing_simple_evidence_selector, evidence_len=data_args.evidence_len,
+                                tokenizer=tokenizer, data_args=data_args, pseudo_label_path=data_args.pseudo_label_path)
+    initializing_evidence_selector_datasets = datasets.map(
         pprepare_features_for_initializing_evidence_selector,
         batched=True,
         num_proc=data_args.preprocessing_num_workers,
@@ -321,8 +310,8 @@ def main():
     trainer = Trainer(
         model=evidence_selector,
         args=training_args,
-        train_dataset=initializing_evidence_selctor_datasets["train"] if training_args.do_train else None,
-        eval_dataset=initializing_evidence_selctor_datasets["validation"] if training_args.do_eval else None,
+        train_dataset=initializing_evidence_selector_datasets["train"] if training_args.do_train else None,
+        eval_dataset=initializing_evidence_selector_datasets["validation"] if training_args.do_eval else None,
         tokenizer=tokenizer,
         data_collator=data_collator,
         compute_metrics=compute_metrics,
@@ -349,7 +338,7 @@ def main():
 
     if eval_on_dev:
         logger.info("*** Evaluate ***")
-        results = trainer.evaluate(initializing_evidence_selctor_datasets["validation"]).metrics
+        results = trainer.evaluate(initializing_evidence_selector_datasets["validation"]).metrics
         fulleval_results = trainer.evaluate_with_explicit_reader(evidence_reader, datasets["validation"], pprepare_features_for_reading_evidence,
                                                                  evidence_generating_datasets["validation"])
 
@@ -363,7 +352,7 @@ def main():
     if eval_on_test:
         logger.info("*** Test ***")
 
-        results = trainer.evaluate(initializing_evidence_selctor_datasets["test"]).metrics
+        results = trainer.evaluate(initializing_evidence_selector_datasets["test"]).metrics
         fulleval_results = trainer.evaluate_with_explicit_reader(evidence_reader, datasets["test"], pprepare_features_for_reading_evidence,
                                                                  evidence_generating_datasets["test"])
 
