@@ -13,3 +13,8 @@ def _grad_sync(optimizer):
                 continue
             # Init optimizer state
             torch.distributed.all_reduce(p.grad)
+
+def compute_mc_metrics(eval_predictions):
+    predictions, label_ids = eval_predictions
+    preds = np.argmax(predictions, axis=1)
+    return {"accuracy": (preds == label_ids).astype(np.float32).mean().item()}
