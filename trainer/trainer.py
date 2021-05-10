@@ -596,7 +596,7 @@ class Trainer:
             pin_memory=self.args.dataloader_pin_memory,
         )
 
-        is_complex_selector = isinstance(evidence_selector, AlbertForEvidenceSelection)
+        is_complex_selector = isinstance(self.model, AlbertForEvidenceSelection)
 
         evidence_logits = {}
         for step, batch in enumerate(evidence_generating_dataloader):
