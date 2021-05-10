@@ -319,15 +319,16 @@ def prepare_features_for_initializing_simple_evidence_selector(examples, evidenc
         if data_args.filter_label_with_ground_truth:
             per_example_evidence_sent_idxs = sorted(pseudo_logit[example_id].keys(),
                                                     key=lambda x: pseudo_logit[example_id][x], reverse=True)[: evidence_len]
-            if data_args.train_with_adversarial_examples:
-                per_example_noise_sent_idxs = sorted(pseudo_logit[example_id].keys(),
-                                                        key=lambda x: pseudo_logit[example_id][x])[
-                                                 : evidence_len]
-            else:
-                per_example_noise_sent_idxs = []
         else:
             per_example_evidence_sent_idxs = sorted(pseudo_logit[example_id].keys(),
                                                     key=lambda x: abs(pseudo_logit[example_id][x]), reverse=True)[: evidence_len]
+
+        if data_args.train_with_adversarial_examples:
+            per_example_noise_sent_idxs = sorted(pseudo_logit[example_id].keys(),
+                                                 key=lambda x: pseudo_logit[example_id][x])[: evidence_len]
+        else:
+            per_example_noise_sent_idxs = []
+
         per_example_sent_starts = sent_starts[i]
         per_example_sent_starts.append(len(full_context))
 
