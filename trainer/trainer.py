@@ -18,6 +18,7 @@ from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 from torch.utils.data.distributed import DistributedSampler
 
 from trainer.common import Timer
+from trainer.trainer_utils import compute_mc_metrics
 from data_utils.collator import DataCollatorForMultipleChoice, DataCollatorForGeneratingEvidenceUsingSelector
 
 from trainer.checkpoint import save_checkpoint
@@ -360,7 +361,7 @@ class Trainer:
                         # Do not waste multiple GPUs when self.distributed_eval_data_split is False
                         if self.evaluate_during_training and self.world_size == 1:
                             with self.timer['cv']:
-                                results = self.evaluate(self.eval_dataset)
+                                results = self.evaluate(self.eval_dataset, self.compute_metrics)
                             for key, value in results.metrics.items():
                                 logger.info(f'step{global_step} eval_{key}: {value}')
                                 metrics[f'step{global_step} eval_{key}'] = value
@@ -420,7 +421,7 @@ class Trainer:
 
 
 
-    def evaluate(self, dataset, data_collator=None, description="", metric_key_prefix="eval"):
+    def evaluate(self, dataset, data_collator=None, description="", metric_key_prefix="eval", compute_metrics=None):
         # predicition with single device
 
         eval_sampler = SequentialSampler(dataset)
@@ -440,7 +441,7 @@ class Trainer:
         labels_host: Union[torch.Tensor, List[torch.Tensor]] = None
 
         world_size = max(1, self.args.world_size)
-        prediction_loss_only = True if self.compute_metrics is None else None
+        prediction_loss_only = True if compute_metrics is None else None
 
         eval_losses_gatherer = DistributedTensorGatherer(world_size, num_examples, make_multiple_of=batch_size)
         if not prediction_loss_only:
@@ -478,8 +479,8 @@ class Trainer:
         preds = preds_gatherer.finalize() if not prediction_loss_only else None
         label_ids = labels_gatherer.finalize() if not prediction_loss_only else None
 
-        if self.compute_metrics is not None and preds is not None and label_ids is not None:
-            metrics = self.compute_metrics(EvalPrediction(predictions=preds, label_ids=label_ids))
+        if compute_metrics is not None and preds is not None and label_ids is not None:
+            metrics = compute_metrics(EvalPrediction(predictions=preds, label_ids=label_ids))
         else:
             metrics = {}
 
@@ -528,6 +529,7 @@ class Trainer:
             data_collator=evidence_reading_data_collator,
             description="Evaluation",
             metric_key_prefix=metric_key_prefix,
+            compute_metrics=compute_mc_metrics
         )
         self.model = evidence_generator
 

@@ -271,7 +271,10 @@ def prepare_features_for_initializing_complex_evidence_selector(examples, tokeni
                                      inputs.char_to_token(new_sent_start),
                                      inputs.char_to_token(new_sent_end)))
             if pseudo_label_path:
-                sent_label.append(pseudo_logit[example_id][sent_idx])
+                if data_args.filter_label_with_ground_truth:
+                    sent_label.append(pseudo_logit[example_id][sent_idx])
+                else:
+                    sent_label.append(abs(pseudo_logit[example_id][sent_idx]))
         features['input_ids'].append(input_ids)
         features['attention_mask'].append(attention_mask)
         features['token_type_ids'].append(token_type_ids)
