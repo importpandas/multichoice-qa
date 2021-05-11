@@ -458,7 +458,7 @@ def prepare_features_for_reading_evidence(examples, evidence_logits=None, pseudo
                                              : evidence_len]
 
         evidence_concat = ""
-        for evidence_sent_idx in per_example_evidence_sent_idxs:
+        for evidence_sent_idx in sorted(per_example_evidence_sent_idxs):
             sent_start = per_example_sent_starts[evidence_sent_idx]
             sent_end = per_example_sent_starts[evidence_sent_idx + 1]
             evidence_concat += full_context[sent_start: sent_end]
