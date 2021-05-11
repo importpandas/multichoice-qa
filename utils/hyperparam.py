@@ -10,7 +10,8 @@ def hyperparam_path_for_initializing_evidence_selector(model_args, data_args, tr
     model_type = f'model_{model_args.model_name_or_path.split("/")[-1]}'
     now_time = time.strftime("%Y_%m_%d_%H:%M:%S", time.localtime())
     exp_name = hyperparam_base(model_args, data_args, training_args)
-    exp_name += f'__evidence_len_{data_args.evidence_len}'
+    if hasattr(data_args, 'evidence_len'):
+        exp_name += f'__evidence_len_{data_args.evidence_len}'
     exp_name += f'__pseudo_path_{data_args.pseudo_label_path.split("/")[-1].replace(".pt", "")}'
     exp_name += f'__filtered_label_{data_args.filter_label_with_ground_truth}'
     if hasattr(data_args, 'train_with_adversarial_examples'):

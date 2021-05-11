@@ -114,12 +114,6 @@ class DataTrainingArguments:
                           "'middle', 'high' or 'all'. For 'dream' dataset, it should be 'plain_text'. May be more "
                           "dataset will be included."}
     )
-    evidence_len: int = field(
-        default=2,
-        metadata={
-            "help":     "number of sentences of each evidence"
-        },
-    )
     eval_dataset: Optional[str] = field(
         default="all",
         metadata={"help": "the eval dataset,'dev', 'test' or 'all' (means both 'dev' and 'test'). default: all"}
@@ -325,86 +319,91 @@ def main():
     pseudo_logit = all_pseudo_label['logit']
     acc = all_pseudo_label['acc']
 
-    pprepare_features_for_using_pseudo_label_as_evidence = partial(prepare_features_for_reading_evidence, evidence_logits=pseudo_logit, evidence_len=data_args.evidence_len,
-                                tokenizer=tokenizer, data_args=data_args)
-    tokenized_datasets = datasets.map(
-        pprepare_features_for_using_pseudo_label_as_evidence,
-        batched=True,
-        num_proc=data_args.preprocessing_num_workers,
-        remove_columns=column_names,
-        load_from_cache_file=not data_args.overwrite_cache,
-    )
-
 
     # Data collator
     data_collator = DataCollatorForMultipleChoice(tokenizer=tokenizer)
-
     # Metric
     def compute_metrics(eval_predictions):
         predictions, label_ids = eval_predictions
         preds = np.argmax(predictions, axis=1)
         return {"accuracy": (preds == label_ids).astype(np.float32).mean().item()}
 
-    # Initialize our Trainer
-    trainer = Trainer(
-        model=model,
-        args=training_args,
-        train_dataset=tokenized_datasets["train"] if training_args.do_train else None,
-        eval_dataset=tokenized_datasets["validation"] if training_args.do_eval else None,
-        tokenizer=tokenizer,
-        data_collator=data_collator,
-        compute_metrics=compute_metrics,
-    )
-
-    if training_args.do_train:
-        train_result = trainer.train(
-            model_path=model_args.model_name_or_path if os.path.isdir(model_args.model_name_or_path) else None
-        )
-        trainer.save_model()  # Saves the tokenizer too for easy upload
-
-        output_train_file = os.path.join(training_args.output_dir, "train_results.txt")
-        if trainer.is_world_process_zero():
-            with open(output_train_file, "w") as writer:
-                logger.info("***** Train results *****")
-                for key, value in sorted(train_result.metrics.items()):
-                    logger.info(f"  {key} = {value}")
-                    writer.write(f"{key} = {value}\n")
-
-            # Need to save the state, since Trainer.save_model saves only the tokenizer with the model
-            trainer.state.save_to_json(os.path.join(training_args.output_dir, "trainer_state.json"))
-
-    # Evaluation
-    # To use the best checkpoint model at end, use the aruguments
-    # load_best_model_at_end, metric_for_best_model, evaluation_strategy steps
-    # --load_best_model_at_end \
-    # --metric_for_best_model accuracy \
-    # --evaluation_strategy steps \
     eval_on_dev = (data_args.eval_dataset == "all" or data_args.eval_dataset == "dev") and training_args.do_eval
     eval_on_test = (data_args.eval_dataset == "all" or data_args.eval_dataset == "test") and training_args.do_eval
 
-    if eval_on_dev:
-        logger.info("*** Evaluate ***")
-        results = trainer.evaluate(eval_dataset=tokenized_datasets["validation"])
+    train_results = {}
+    eval_results = {}
+    test_results = {}
+    for evidence_num in range(1, 6):
 
+        pprepare_features_for_using_pseudo_label_as_evidence = partial(prepare_features_for_reading_evidence, evidence_logits=pseudo_logit, evidence_len=evidence_num,
+                                    tokenizer=tokenizer, data_args=data_args)
+        tokenized_datasets = datasets.map(
+            pprepare_features_for_using_pseudo_label_as_evidence,
+            batched=True,
+            num_proc=data_args.preprocessing_num_workers,
+            remove_columns=column_names,
+            load_from_cache_file=not data_args.overwrite_cache,
+        )
+
+        # Initialize our Trainer
+        trainer = Trainer(
+            model=model,
+            args=training_args,
+            train_dataset=tokenized_datasets["train"] if training_args.do_train else None,
+            eval_dataset=tokenized_datasets["validation"] if training_args.do_eval else None,
+            tokenizer=tokenizer,
+            data_collator=data_collator,
+            compute_metrics=compute_metrics,
+        )
+
+        if training_args.do_train:
+            train_result = trainer.train(
+                model_path=model_args.model_name_or_path if os.path.isdir(model_args.model_name_or_path) else None
+            )
+            trainer.save_model()  # Saves the tokenizer too for easy upload
+
+            #Need to save the state, since Trainer.save_model saves only the tokenizer with the model
+            trainer.state.save_to_json(os.path.join(training_args.output_dir, f"evidence_{evidence_num}_trainer_state.json"))
+            for key in list(train_result.metric.keys()):
+                train_results[f'evidence{evidence_num}_{key}'] = train_result.metric[key]
+
+        if eval_on_dev:
+            logger.info("*** Evaluate ***")
+            results = trainer.evaluate(eval_dataset=tokenized_datasets["validation"])
+            for key in list(results.keys()):
+                eval_results[f'evidence{evidence_num}_{key}'] = results[key]
+
+        if eval_on_test:
+            logger.info("*** Test ***")
+            results = trainer.evaluate(eval_dataset=tokenized_datasets["test"])
+            for key in list(results.keys()):
+                test_results[f'evidence{evidence_num}_{key}'] = results[key]
+
+    if eval_on_dev:
         output_eval_file = os.path.join(training_args.output_dir, "eval_results.txt")
         if trainer.is_world_process_zero():
             with open(output_eval_file, "w") as writer:
                 logger.info("***** Eval results *****")
-                for key, value in sorted(results.items()):
+                for key, value in sorted(eval_results.items()):
                     logger.info(f"  {key} = {value}")
                     writer.write(f"{key} = {value}\n")
+
     if eval_on_test:
-        logger.info("*** Test ***")
-
-        results = trainer.evaluate(eval_dataset=tokenized_datasets["test"])
-
         output_test_file = os.path.join(training_args.output_dir, "test_results.txt")
-        if trainer.is_world_process_zero():
-            with open(output_test_file, "w") as writer:
-                logger.info("***** Test results *****")
-                for key, value in sorted(results.items()):
-                    logger.info(f"  {key} = {value}")
-                    writer.write(f"{key} = {value}\n")
+        with open(output_test_file, "w") as writer:
+            logger.info("***** Test results *****")
+            for key, value in sorted(test_results.items()):
+                logger.info(f"  {key} = {value}")
+                writer.write(f"{key} = {value}\n")
+
+    if training_args.do_train:
+        output_train_file = os.path.join(training_args.output_dir, "train_results.txt")
+        with open(output_train_file, "w") as writer:
+            logger.info("***** Train results *****")
+            for key, value in sorted(train_results.items()):
+                logger.info(f"  {key} = {value}")
+                writer.write(f"{key} = {value}\n")
 
 
 def _mp_fn(index):
