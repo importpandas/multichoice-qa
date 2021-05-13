@@ -53,7 +53,8 @@ class DataCollatorForGeneratingEvidenceLabel:
         label_name = "label" if "label" in features[0].keys() else "labels"
         labels = [feature.pop(label_name) for feature in features]
         flattened_features = [
-            [{k: v[i] for k, v in feature.items() if k not in ["example_ids", "sent_bound_token"]} for i in range(num_choices)] for feature in features
+            [{k: v[i] for k, v in feature.items() if k not in ["example_ids", "sent_bound_token", "sent_sequence"]}
+                                                    for i in range(num_choices)] for feature in features
         ]
         flattened_features = sum(flattened_features, [])
 
@@ -68,7 +69,10 @@ class DataCollatorForGeneratingEvidenceLabel:
         # Un-flatten
         batch = {k: v.view(batch_size, num_choices, -1) for k, v in batch.items()}
         batch['example_ids'] = [feature['example_ids'] for feature in features]
-        batch['sent_bound_token'] = [feature['sent_bound_token'] for feature in features]
+        if 'sent_sequence' in features[0].keys():
+            batch['sent_sequence'] = [feature['sent_sequence'] for feature in features]
+        elif 'sent_bound_token' in features[0].keys():
+            batch['sent_bound_token'] = [feature['sent_bound_token'] for feature in features]
         batch["labels"] = torch.tensor(labels, dtype=torch.int64)
 
         return batch
