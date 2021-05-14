@@ -33,7 +33,7 @@ from pathlib import Path
 import transformers
 from transformers import (
     AutoConfig,
-    AutoModelForMultipleChoice,
+    # AutoModelForMultipleChoice,
     AutoTokenizer,
     HfArgumentParser,
     Trainer,
@@ -41,6 +41,9 @@ from transformers import (
     default_data_collator,
     set_seed,
 )
+
+from model.auto_model import AutoModelForMultipleChoice
+
 from transformers.tokenization_utils_base import PaddingStrategy, PreTrainedTokenizerBase
 from utils.utils_distributed_training import is_main_process
 from utils.hyperparam import hyperparam_path_for_baseline
@@ -185,9 +188,6 @@ def main():
             "Use --overwrite_output_dir to overcome."
         )
 
-
-
-
     # Log on each process the small summary:
     logger.warning(
         f"Process rank: {training_args.local_rank}, device: {training_args.device}, n_gpu: {training_args.n_gpu}"
@@ -262,6 +262,12 @@ def main():
         remove_columns=column_names,
         load_from_cache_file=not data_args.overwrite_cache,
     )
+
+    if config.model_type == "openai-gpt":
+        tokenizer.add_special_tokens({'cls_token': '[CLS]', 'pad_token': '[pad]'})
+        config.pad_token_id = tokenizer.pad_token_id
+        # tokenizer.add_special_tokens({'cls_token': '[CLS]'})
+        model.resize_token_embeddings(len(tokenizer))
 
     # Data collator
     data_collator = (
