@@ -258,6 +258,7 @@ def main():
         model = torch.nn.DataParallel(model)
 
     pseudo_label = {}
+    options_prob_diff = {}
     acc = {}
     for train_test_or_eval, dataset in tokenized_datasets.items():
         dataloader = DataLoader(
@@ -269,6 +270,7 @@ def main():
         )
 
         pseudo_label_split = {}
+        options_prob_diff_split = {}
         acc_split = {}
         print(f'{train_test_or_eval}', len(dataloader))
         for step, batch in tqdm.tqdm(enumerate(dataloader)):
@@ -288,9 +290,12 @@ def main():
 
                 if example_ids[i] not in pseudo_label_split.keys():
                     kl_div_per_example = {}
+                    prob_diff_per_example = {}
                     pseudo_label_split[example_ids[i]] = kl_div_per_example
+                    options_prob_diff_split[example_ids[i]] = prob_diff_per_example
                 else:
                     kl_div_per_example = pseudo_label_split[example_ids[i]]
+                    prob_diff_per_example = options_prob_diff_split[example_ids[i]]
 
                 one_example_logit = origin_logits[i]
                 one_example_sent_bounds = torch.tensor(one_example_sent_bounds, device=device)
@@ -326,26 +331,32 @@ def main():
                         }
                         masked_logits = model(**masked_inputs).logits.detach().cpu()
                         kl_divs = torch.sum(F.kl_div(F.log_softmax(masked_logits, dim=-1), F.softmax(one_example_logit, dim=-1), reduction='none'), dim=-1)
+                        prob_diff = F.softmax(masked_logits, dim=-1) - F.softmax(one_example_logit, dim=-1)
 
                     for k, kl_div in enumerate(kl_divs.detach().cpu().tolist()):
                         sent_idx = one_example_sent_bounds[batch_start + k, 0].item()
-                        evidence_or_noise = 1 if F.softmax(masked_logits[k])[one_example_label].item() < F.softmax(one_example_logit)[one_example_label].item() else -1
+                        evidence_or_noise = 1 if F.softmax(masked_logits[k], dim=-1)[one_example_label].item() \
+                                                < F.softmax(one_example_logit, dim=-1)[one_example_label].item() else -1
                         if sent_idx in kl_div_per_example.keys():
-                            kl_div_per_example[sent_idx] = (evidence_or_noise * kl_div) if kl_div > abs(kl_div_per_example[sent_idx])\
-                                                                                    else kl_div_per_example[sent_idx]
+                            if kl_div > abs(kl_div_per_example[sent_idx]):
+                                kl_div_per_example[sent_idx] = evidence_or_noise * kl_div
+                                prob_diff_per_example[sent_idx] = prob_diff[k].detach().cpu().tolist()
                         else:
                             kl_div_per_example[sent_idx] = evidence_or_noise * kl_div
+                            prob_diff_per_example[sent_idx] = prob_diff[k].detach().cpu().tolist()
 
                 acc_split[example_ids[i]] = 1 if torch.argmax(one_example_logit).item() == one_example_label.item() else 0
 
         pseudo_label[train_test_or_eval] = pseudo_label_split
+        options_prob_diff[train_test_or_eval] = options_prob_diff_split
         acc[train_test_or_eval] = acc_split
 
     label = {
         'pseudo_label': pseudo_label,
-        'acc': acc
+        'acc': acc,
+        'options_prob_diff': options_prob_diff
     }
-    torch.save(label, data_args.dataset + f"_pseudo_label_{config.model_type}_{config.hidden_size}.pt")
+    torch.save(label, data_args.dataset + f"_pseudo_label_with_options_{config.model_type}_{config.hidden_size}.pt")
 
 
 def _mp_fn(index):
