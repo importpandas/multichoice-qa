@@ -21,6 +21,7 @@ import logging
 import os
 import sys
 from pathlib import Path
+
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dataclasses import dataclass, field
 from typing import Optional, Union
@@ -46,6 +47,7 @@ from utils.utils_distributed_training import is_main_process
 from utils.hyperparam import hyperparam_path_for_initializing_evidence_selector
 from utils.initialization import setup_root_logger
 from utils.utils_race import load_pseudo_label
+from data_utils.collator import DataCollatorForMultipleChoice
 
 logger = logging.getLogger(__name__)
 
@@ -121,31 +123,38 @@ class DataTrainingArguments:
     overwrite_cache: bool = field(
         default=False, metadata={"help": "Overwrite the cached training and evaluation sets"}
     )
+    run_pseudo_label_with_options: bool = field(
+        default=False, metadata={"help": "Whether run the pseudo label with options tag"}
+    )
     preprocessing_num_workers: Optional[int] = field(
         default=None,
         metadata={"help": "The number of processes to use for the preprocessing."},
     )
+    max_evidence_len: int = field(
+        default=6,
+        metadata={"help": "The maximum length of input evidence sentences"},
+    )
     max_qa_length: int = field(
         default=64,
         metadata={
-            "help":     "The maximum total input sequence length after WordPiece tokenization. "
-                        "Sequences longer than this will be truncated, and sequences shorter "
-                        "than this will be padded."
+            "help": "The maximum total input sequence length after WordPiece tokenization. "
+                    "Sequences longer than this will be truncated, and sequences shorter "
+                    "than this will be padded."
         },
     )
     max_seq_length: int = field(
         default=512,
         metadata={
             "help": "The maximum total input sequence length after tokenization. If passed, sequences longer "
-            "than this will be truncated, sequences shorter will be padded."
+                    "than this will be truncated, sequences shorter will be padded."
         },
     )
     pad_to_max_length: bool = field(
         default=False,
         metadata={
             "help": "Whether to pad all samples to the maximum sentence length. "
-            "If False, will pad the samples dynamically when batching to the maximum length in the batch. More "
-            "efficient on GPU but very bad for TPU."
+                    "If False, will pad the samples dynamically when batching to the maximum length in the batch. More "
+                    "efficient on GPU but very bad for TPU."
         },
     )
 
@@ -156,63 +165,6 @@ class DataTrainingArguments:
         if self.validation_file is not None:
             extension = self.validation_file.split(".")[-1]
             assert extension in ["csv", "json"], "`validation_file` should be a csv or a json file."
-
-
-@dataclass
-class DataCollatorForMultipleChoice:
-    """
-    Data collator that will dynamically pad the inputs for multiple choice received.
-
-    Args:
-        tokenizer (:class:`~transformers.PreTrainedTokenizer` or :class:`~transformers.PreTrainedTokenizerFast`):
-            The tokenizer used for encoding the data.
-        padding (:obj:`bool`, :obj:`str` or :class:`~transformers.tokenization_utils_base.PaddingStrategy`, `optional`, defaults to :obj:`True`):
-            Select a strategy to pad the returned sequences (according to the model's padding side and padding index)
-            among:
-
-            * :obj:`True` or :obj:`'longest'`: Pad to the longest sequence in the batch (or no padding if only a single
-              sequence if provided).
-            * :obj:`'max_length'`: Pad to a maximum length specified with the argument :obj:`max_length` or to the
-              maximum acceptable input length for the model if that argument is not provided.
-            * :obj:`False` or :obj:`'do_not_pad'` (default): No padding (i.e., can output a batch with sequences of
-              different lengths).
-        max_length (:obj:`int`, `optional`):
-            Maximum length of the returned list and optionally padding length (see above).
-        pad_to_multiple_of (:obj:`int`, `optional`):
-            If set will pad the sequence to a multiple of the provided value.
-
-            This is especially useful to enable the use of Tensor Cores on NVIDIA hardware with compute capability >=
-            7.5 (Volta).
-    """
-
-    tokenizer: PreTrainedTokenizerBase
-    padding: Union[bool, str, PaddingStrategy] = True
-    max_length: Optional[int] = None
-    pad_to_multiple_of: Optional[int] = None
-
-    def __call__(self, features):
-        label_name = "label" if "label" in features[0].keys() else "labels"
-        labels = [feature.pop(label_name) for feature in features]
-        batch_size = len(features)
-        num_choices = len(features[0]["input_ids"])
-        flattened_features = [
-            [{k: v[i] for k, v in feature.items()} for i in range(num_choices)] for feature in features
-        ]
-        flattened_features = sum(flattened_features, [])
-
-        batch = self.tokenizer.pad(
-            flattened_features,
-            padding=self.padding,
-            max_length=self.max_length,
-            pad_to_multiple_of=self.pad_to_multiple_of,
-            return_tensors="pt",
-        )
-
-        # Un-flatten
-        batch = {k: v.view(batch_size, num_choices, -1) for k, v in batch.items()}
-        # Add back labels
-        batch["labels"] = torch.tensor(labels, dtype=torch.int64)
-        return batch
 
 
 def main():
@@ -238,7 +190,6 @@ def main():
     setup_root_logger(ckpt_dir, training_args.local_rank, debug=False, postfix=postfix)
 
     training_args.output_dir = checkpoint_dir
-
 
     # Setup logging
     logging.basicConfig(
@@ -284,7 +235,8 @@ def main():
     data_files['validation'] = data_args.validation_file if data_args.validation_file is not None else None
     data_files['test'] = data_args.test_file if data_args.test_file is not None else None
 
-    datasets = load_dataset(data_args.dataload_script, data_args.dataload_split, data_files=data_files if data_files['train'] is not None else None,
+    datasets = load_dataset(data_args.dataload_script, data_args.dataload_split,
+                            data_files=data_files if data_files['train'] is not None else None,
                             data_dir=data_args.data_dir)
 
     # Load pretrained model and tokenizer
@@ -313,15 +265,17 @@ def main():
     else:
         column_names = datasets["validation"].column_names
 
-
     all_pseudo_label = load_pseudo_label(data_args.pseudo_label_path)
 
-    pseudo_logit = all_pseudo_label['logit']
+    if data_args.run_pseudo_label_with_options:
+        pseudo_logit = all_pseudo_label['options_prob_diff']
+    else:
+        pseudo_logit = all_pseudo_label['logit']
     acc = all_pseudo_label['acc']
-
 
     # Data collator
     data_collator = DataCollatorForMultipleChoice(tokenizer=tokenizer)
+
     # Metric
     def compute_metrics(eval_predictions):
         predictions, label_ids = eval_predictions
@@ -334,10 +288,13 @@ def main():
     train_results = {}
     eval_results = {}
     test_results = {}
-    for evidence_num in range(1, 6):
+    for evidence_num in range(1, data_args.max_evidence_len):
 
-        pprepare_features_for_using_pseudo_label_as_evidence = partial(prepare_features_for_reading_evidence, evidence_logits=pseudo_logit, evidence_len=evidence_num,
-                                    tokenizer=tokenizer, data_args=data_args)
+        pprepare_features_for_using_pseudo_label_as_evidence = partial(prepare_features_for_reading_evidence,
+                                                                       run_pseudo_label_with_options=data_args.run_pseudo_label_with_options,
+                                                                       evidence_logits=pseudo_logit,
+                                                                       evidence_len=evidence_num,
+                                                                       tokenizer=tokenizer, data_args=data_args)
         tokenized_datasets = datasets.map(
             pprepare_features_for_using_pseudo_label_as_evidence,
             batched=True,
@@ -363,8 +320,9 @@ def main():
             )
             trainer.save_model()  # Saves the tokenizer too for easy upload
 
-            #Need to save the state, since Trainer.save_model saves only the tokenizer with the model
-            trainer.state.save_to_json(os.path.join(training_args.output_dir, f"evidence_{evidence_num}_trainer_state.json"))
+            # Need to save the state, since Trainer.save_model saves only the tokenizer with the model
+            trainer.state.save_to_json(
+                os.path.join(training_args.output_dir, f"evidence_{evidence_num}_trainer_state.json"))
             for key in list(train_result.metric.keys()):
                 train_results[f'evidence{evidence_num}_{key}'] = train_result.metric[key]
 

@@ -21,6 +21,11 @@ def load_pseudo_label(pseudo_label_path):
     #                                   **pseudo_label['acc']['validation'], **pseudo_label['acc']['test'])
     pseudo_label_merged['logit'] = dict(**pseudo_label['pseudo_label']['train'],
                                       **pseudo_label['pseudo_label']['validation'], **pseudo_label['pseudo_label']['test'])
+    if 'options_prob_diff' in pseudo_label.keys():
+        pseudo_label_merged['options_prob_diff'] = dict(**pseudo_label['options_prob_diff']['train'],
+                                                        **pseudo_label['options_prob_diff']['validation'],
+                                                        **pseudo_label['options_prob_diff']['test'])
+
     return pseudo_label_merged
 
 
@@ -528,7 +533,8 @@ def prepare_features_for_generating_evidence_using_selector(examples, tokenizer=
     # Un-flatten
     return tokenized_examples
 
-def prepare_features_for_reading_evidence(examples, evidence_logits=None, pseudo_label_or_not=True, evidence_len=2, tokenizer=None, data_args=None):
+def prepare_features_for_reading_evidence(examples, evidence_logits=None, pseudo_label_or_not=True, run_pseudo_label_with_options=False,
+                                                            evidence_len=2, tokenizer=None, data_args=None):
     contexts = examples['article']
     answers = examples['answer']
     options = examples['options']
@@ -552,14 +558,20 @@ def prepare_features_for_reading_evidence(examples, evidence_logits=None, pseudo
 
 
         evidence_len = evidence_len if evidence_len <= len(evidence_logits[example_id]) else len(evidence_logits[example_id])
-        if data_args.filter_label_with_ground_truth or not pseudo_label_or_not:
-            per_example_evidence_sent_idxs = sorted(per_example_evidence_logits.keys(),
-                                                    key=lambda x: per_example_evidence_logits[x], reverse=True)[
-                                             : evidence_len]
+        if run_pseudo_label_with_options:
+            per_example_evidence_sent_idxs = list(set(sum([sorted(per_example_evidence_logits.keys(),
+                                                    key=lambda x: per_example_evidence_logits[x][option_num])[
+                                             : evidence_len] for option_num in range(4)], [])))
+
         else:
-            per_example_evidence_sent_idxs = sorted(per_example_evidence_logits.keys(),
-                                                    key=lambda x: abs(per_example_evidence_logits[x]), reverse=True)[
-                                             : evidence_len]
+            if data_args.filter_label_with_ground_truth or not pseudo_label_or_not:
+                per_example_evidence_sent_idxs = sorted(per_example_evidence_logits.keys(),
+                                                        key=lambda x: per_example_evidence_logits[x], reverse=True)[
+                                                 : evidence_len]
+            else:
+                per_example_evidence_sent_idxs = sorted(per_example_evidence_logits.keys(),
+                                                        key=lambda x: abs(per_example_evidence_logits[x]), reverse=True)[
+                                                 : evidence_len]
 
         evidence_concat = ""
         for evidence_sent_idx in sorted(per_example_evidence_sent_idxs):
