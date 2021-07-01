@@ -288,7 +288,7 @@ def main():
     train_results = {}
     eval_results = {}
     test_results = {}
-    for evidence_num in range(1, data_args.max_evidence_len):
+    for evidence_num in range(1, data_args.max_evidence_len + 1):
 
         pprepare_features_for_using_pseudo_label_as_evidence = partial(prepare_features_for_reading_evidence,
                                                                        run_pseudo_label_with_options=data_args.run_pseudo_label_with_options,

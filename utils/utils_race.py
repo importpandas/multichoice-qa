@@ -559,9 +559,14 @@ def prepare_features_for_reading_evidence(examples, evidence_logits=None, pseudo
 
         evidence_len = evidence_len if evidence_len <= len(evidence_logits[example_id]) else len(evidence_logits[example_id])
         if run_pseudo_label_with_options:
-            per_example_evidence_sent_idxs = list(set(sum([sorted(per_example_evidence_logits.keys(),
-                                                    key=lambda x: per_example_evidence_logits[x][option_num])[
-                                             : evidence_len] for option_num in range(4)], [])))
+            if data_args.filter_label_with_ground_truth or not pseudo_label_or_not:
+                per_example_evidence_sent_idxs = sorted(per_example_evidence_logits.keys(),
+                                                        key=lambda x: per_example_evidence_logits[x][label])[
+                                                 : evidence_len]
+            else:
+                per_example_evidence_sent_idxs = list(set(sum([sorted(per_example_evidence_logits.keys(),
+                                                        key=lambda x: per_example_evidence_logits[x][option_num])[
+                                                 : evidence_len] for option_num in range(4)], [])))
 
         else:
             if data_args.filter_label_with_ground_truth or not pseudo_label_or_not:
