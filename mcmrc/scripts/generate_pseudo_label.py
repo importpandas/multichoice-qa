@@ -20,9 +20,8 @@ Fine-tuning the library models for multiple choice.
 import logging
 import os
 import sys
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dataclasses import dataclass, field
-from typing import Optional, Union
+from typing import Optional
 
 import torch
 import torch.nn.functional as F
@@ -43,116 +42,12 @@ from transformers import (
     default_data_collator,
     set_seed,
 )
-from transformers.tokenization_utils_base import PaddingStrategy, PreTrainedTokenizerBase
 from utils.utils_distributed_training import is_main_process
-from data_utils.collator import DataCollatorForGeneratingEvidenceLabel
-
+from ..data_utils.collator import DataCollatorForGeneratingEvidenceLabel
+from ..cli.argument import BasicModelArguments, BasicDataTrainingArguments
 
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class ModelArguments:
-    """
-    Arguments pertaining to which model/config/tokenizer we are going to fine-tune from.
-    """
-
-    model_name_or_path: str = field(
-        metadata={"help": "Path to pretrained model or model identifier from huggingface.co/models"}
-    )
-    config_name: Optional[str] = field(
-        default=None, metadata={"help": "Pretrained config name or path if not the same as model_name"}
-    )
-    tokenizer_name: Optional[str] = field(
-        default=None, metadata={"help": "Pretrained tokenizer name or path if not the same as model_name"}
-    )
-    cache_dir: Optional[str] = field(
-        default=None,
-        metadata={"help": "Where do you want to store the pretrained models downloaded from huggingface.co"},
-    )
-    use_fast_tokenizer: bool = field(
-        default=True,
-        metadata={"help": "Whether to use one of the fast tokenizer (backed by the tokenizers library) or not."},
-    )
-
-
-@dataclass
-class DataTrainingArguments:
-    """
-    Arguments pertaining to what data we are going to input our model for training and eval.
-    """
-    pseudo_label_path: str = field(
-        metadata={"help": "Path to pseudo evidence label"}
-    )
-    dataload_script: str = field(
-        metadata={"help": "path to the dataset processing script with the dataset builder. Can be either:a local path "
-                          "to processing script or the directory containing the script (if the script has the same "
-                          "name as the directory),e.g. ``'./dataset/squad'`` or ``'./dataset/squad/squad.py'"}
-    )
-    train_file: Optional[str] = field(default=None, metadata={"help": "The input training data file (a text file)."})
-    validation_file: Optional[str] = field(
-        default=None,
-        metadata={"help": "An optional input evaluation data file to evaluate the perplexity on (a text file)."},
-    )
-    test_file: Optional[str] = field(
-        default=None,
-        metadata={"help": "An optional input test data file"}
-    )
-    data_dir: Optional[str] = field(default=None, metadata={"help": "the local path of input data"})
-    dataset: str = field(
-        default='race',
-        metadata={"help": "name of the used dataset, race or dream. Default: race."}
-    )
-    dataload_split: Optional[str] = field(
-        default=None,
-        metadata={"help": "the type (or say 'category') needs to be loaded. For 'race' dataset, it can be chosen from "
-                          "'middle', 'high' or 'all'. For 'dream' dataset, it should be 'plain_text'. May be more "
-                          "dataset will be included."}
-    )
-    eval_dataset: Optional[str] = field(
-        default="all",
-        metadata={"help": "the eval dataset,'dev', 'test' or 'all' (means both 'dev' and 'test'). default: all"}
-    )
-    overwrite_cache: bool = field(
-        default=False, metadata={"help": "Overwrite the cached training and evaluation sets"}
-    )
-    preprocessing_num_workers: Optional[int] = field(
-        default=None,
-        metadata={"help": "The number of processes to use for the preprocessing."},
-    )
-    max_qa_length: int = field(
-        default=64,
-        metadata={
-            "help":     "The maximum total input sequence length after WordPiece tokenization. "
-                        "Sequences longer than this will be truncated, and sequences shorter "
-                        "than this will be padded."
-        },
-    )
-    max_seq_length: int = field(
-        default=512,
-        metadata={
-            "help": "The maximum total input sequence length after tokenization. If passed, sequences longer "
-            "than this will be truncated, sequences shorter will be padded."
-        },
-    )
-    pad_to_max_length: bool = field(
-        default=False,
-        metadata={
-            "help": "Whether to pad all samples to the maximum sentence length. "
-            "If False, will pad the samples dynamically when batching to the maximum length in the batch. More "
-            "efficient on GPU but very bad for TPU."
-        },
-    )
-
-    def __post_init__(self):
-        if self.train_file is not None:
-            extension = self.train_file.split(".")[-1]
-            assert extension in ["csv", "json"], "`train_file` should be a csv or a json file."
-        if self.validation_file is not None:
-            extension = self.validation_file.split(".")[-1]
-            assert extension in ["csv", "json"], "`validation_file` should be a csv or a json file."
-
 
 
 def main():
@@ -160,7 +55,7 @@ def main():
     # or by passing the --help flag to this script.
     # We now keep distinct sets of args, for a cleaner separation of concerns.
 
-    parser = HfArgumentParser((ModelArguments, DataTrainingArguments, TrainingArguments))
+    parser = HfArgumentParser((BasicModelArguments, BasicDataTrainingArguments, TrainingArguments))
     if len(sys.argv) == 2 and sys.argv[1].endswith(".json"):
         # If we pass only one argument to the script and it's the path to a json file,
         # let's parse it to get our arguments.
@@ -200,7 +95,7 @@ def main():
         raise ValueError("Dataset should be race or dream.")
     else:
         if data_args.dataset == 'race':
-            from utils.utils_race import prepare_features_for_generating_multi_turn_pseudo_label
+            from mcmrc.data_utils.processors import prepare_features_for_generate_pseudo_label
         if data_args.dataset == 'dream':
             pass
 
@@ -237,11 +132,10 @@ def main():
         cache_dir=model_args.cache_dir,
     )
 
-    column_names = datasets["test"].column_names
+    column_names = datasets["train"].column_names
 
 
-    pprepare_features_for_generate_pseudo_label = partial(prepare_features_for_generating_multi_turn_pseudo_label, tokenizer=tokenizer, data_args=data_args,
-                                                          pseudo_label_path=data_args.pseudo_label_path)
+    pprepare_features_for_generate_pseudo_label = partial(prepare_features_for_generate_pseudo_label, tokenizer=tokenizer, data_args=data_args)
     tokenized_datasets = datasets.map(
         pprepare_features_for_generate_pseudo_label,
         batched=True,
@@ -262,6 +156,7 @@ def main():
         model = torch.nn.DataParallel(model)
 
     pseudo_label = {}
+    options_prob_diff = {}
     acc = {}
     for train_test_or_eval, dataset in tokenized_datasets.items():
         dataloader = DataLoader(
@@ -273,6 +168,7 @@ def main():
         )
 
         pseudo_label_split = {}
+        options_prob_diff_split = {}
         acc_split = {}
         print(f'{train_test_or_eval}', len(dataloader))
         for step, batch in tqdm.tqdm(enumerate(dataloader)):
@@ -282,33 +178,83 @@ def main():
                     "attention_mask": batch['attention_mask'].to(device),
                     "token_type_ids": batch['token_type_ids'].to(device),
                 }
-                origin_logits = model(**origin_inputs).logits.detach()
+                origin_logits = model(**origin_inputs).logits.detach().cpu()
 
             example_ids = batch['example_ids']
-            sent_sequence = batch['sent_sequence']
-            batch_loss = F.cross_entropy(origin_logits, batch['labels'], reduction='none')
-            for example_id, one_sent_sequence, loss in zip(example_ids, sent_sequence, batch_loss):
-                if example_id not in pseudo_label_split.keys():
-                    acc_split[example_id] = loss
-                    pseudo_label_split[example_id] = {k: 0 for k in one_sent_sequence}
+            sent_bounds = batch['sent_bound_token']
+
+
+            for i, one_example_sent_bounds in enumerate(sent_bounds):
+
+                if example_ids[i] not in pseudo_label_split.keys():
+                    kl_div_per_example = {}
+                    prob_diff_per_example = {}
+                    pseudo_label_split[example_ids[i]] = kl_div_per_example
+                    options_prob_diff_split[example_ids[i]] = prob_diff_per_example
                 else:
-                    if loss < acc_split[example_id]:
-                        acc_split[example_id] = loss
-                        pseudo_label_split[example_id] = {k: 0 for k in one_sent_sequence}
+                    kl_div_per_example = pseudo_label_split[example_ids[i]]
+                    prob_diff_per_example = options_prob_diff_split[example_ids[i]]
+
+                one_example_logit = origin_logits[i]
+                one_example_sent_bounds = torch.tensor(one_example_sent_bounds, device=device)
+                one_example_attention_mask = batch['attention_mask'][i]
+                one_example_input_ids = batch['input_ids'][i]
+                one_example_token_type_ids = batch['token_type_ids'][i]
+                one_example_label = batch['labels'][i]
+                sent_num = one_example_sent_bounds.size()[0]
 
 
+                for j in range(0, sent_num, training_args.eval_batch_size):
+                    batch_start = j
+                    batch_end = j + training_args.eval_batch_size if j < sent_num - training_args.eval_batch_size else sent_num
+                    batched_sent_bound = torch.stack((one_example_sent_bounds[batch_start: batch_end, 1],
+                                                      one_example_sent_bounds[batch_start: batch_end, 2])).unsqueeze(1).permute(2, 1, 0)
 
+                    batched_attention_mask = one_example_attention_mask.unsqueeze(0).expand(batch_end - batch_start, -1,
+                                                                                            -1).clone().to(device)
 
-            #acc_split[example_ids[i]] = 1 if torch.argmax(one_example_logit).item() == one_example_label.item() else 0
+                    pos_matrix = torch.arange(batched_attention_mask.size()[-1], device=device).view(1, 1, -1)
+                    if_in_sent = torch.logical_and(batched_sent_bound[:,:,0].unsqueeze(-1) <= pos_matrix,
+                                                   pos_matrix <= batched_sent_bound[:,:,1].unsqueeze(-1))
+
+                    batched_attention_mask = torch.where(if_in_sent, torch.tensor((0), device=device), batched_attention_mask)
+                    batched_input_ids = one_example_input_ids.expand(batch_end - batch_start, -1, -1).contiguous()
+                    batched_token_type_ids = one_example_token_type_ids.expand(batch_end - batch_start, -1, -1).contiguous()
+
+                    with torch.no_grad():
+                        masked_inputs = {
+                            "input_ids": batched_input_ids.to(device),
+                            "attention_mask": batched_attention_mask.to(device),
+                            "token_type_ids": batched_token_type_ids.to(device),
+                        }
+                        masked_logits = model(**masked_inputs).logits.detach().cpu()
+                        kl_divs = torch.sum(F.kl_div(F.log_softmax(masked_logits, dim=-1), F.softmax(one_example_logit, dim=-1), reduction='none'), dim=-1)
+                        prob_diff = F.softmax(masked_logits, dim=-1) - F.softmax(one_example_logit, dim=-1)
+
+                    for k, kl_div in enumerate(kl_divs.detach().cpu().tolist()):
+                        sent_idx = one_example_sent_bounds[batch_start + k, 0].item()
+                        evidence_or_noise = 1 if F.softmax(masked_logits[k], dim=-1)[one_example_label].item() \
+                                                < F.softmax(one_example_logit, dim=-1)[one_example_label].item() else -1
+                        if sent_idx in kl_div_per_example.keys():
+                            if kl_div > abs(kl_div_per_example[sent_idx]):
+                                kl_div_per_example[sent_idx] = evidence_or_noise * kl_div
+                                prob_diff_per_example[sent_idx] = prob_diff[k].detach().cpu().tolist()
+                        else:
+                            kl_div_per_example[sent_idx] = evidence_or_noise * kl_div
+                            prob_diff_per_example[sent_idx] = prob_diff[k].detach().cpu().tolist()
+
+                acc_split[example_ids[i]] = 1 if torch.argmax(one_example_logit).item() == one_example_label.item() else 0
 
         pseudo_label[train_test_or_eval] = pseudo_label_split
+        options_prob_diff[train_test_or_eval] = options_prob_diff_split
         acc[train_test_or_eval] = acc_split
 
     label = {
         'pseudo_label': pseudo_label,
-        'acc': acc
+        'acc': acc,
+        'options_prob_diff': options_prob_diff
     }
-    torch.save(label, f"mt_{data_args.pseudo_label_path.split('/')[-1]}")
+    torch.save(label, data_args.dataset + f"_pseudo_label_with_options_{config.model_type}_{config.hidden_size}.pt")
 
 
 def _mp_fn(index):

@@ -2,6 +2,7 @@ import six
 import unicodedata
 import torch
 import random
+import numpy as np
 import spacy
 
 
@@ -12,6 +13,7 @@ def whitespace_tokenize(text):
         return []
     tokens = text.split()
     return tokens
+
 
 def load_pseudo_label(pseudo_label_path):
     pseudo_label = torch.load(pseudo_label_path)
@@ -50,6 +52,29 @@ def process_text(inputs, remove_space=True, lower=False):
         outputs = outputs.lower()
 
     return outputs
+
+
+def get_orig_chars_to_bounded_chars_mapping(tokens_char_span, total_len):
+    all_chars_to_start_chars = []
+    all_chars_to_end_chars = []
+
+    prev_token_end_char = 0
+
+    for token_start_char, token_end_char in tokens_char_span:
+        if prev_token_end_char == token_end_char:
+            continue
+        token_start_char = prev_token_end_char if token_start_char < prev_token_end_char else token_start_char
+        all_chars_to_start_chars += [token_start_char] * (token_end_char - prev_token_end_char)
+        all_chars_to_end_chars += [prev_token_end_char - 1] * (token_start_char - prev_token_end_char)
+        all_chars_to_end_chars += [token_start_char] * (token_end_char - token_start_char)
+        prev_token_end_char = token_end_char
+
+    if prev_token_end_char != total_len:
+        all_chars_to_start_chars += [prev_token_end_char - 1] * (total_len - prev_token_end_char)
+        all_chars_to_end_chars += [prev_token_end_char - 1] * (total_len - prev_token_end_char)
+
+    assert len(all_chars_to_start_chars) == len(all_chars_to_end_chars) == total_len
+    return all_chars_to_start_chars, all_chars_to_end_chars
 
 
 # Preprocessing the datasets.
@@ -98,28 +123,6 @@ def prepare_features(examples, tokenizer=None, data_args=None):
     # Un-flatten
     return tokenized_examples
 
-
-def get_orig_chars_to_bounded_chars_mapping(tokens_char_span, total_len):
-    all_chars_to_start_chars = []
-    all_chars_to_end_chars = []
-
-    prev_token_end_char = 0
-
-    for token_start_char, token_end_char in tokens_char_span:
-        if prev_token_end_char == token_end_char:
-            continue
-        token_start_char = prev_token_end_char if token_start_char < prev_token_end_char else token_start_char
-        all_chars_to_start_chars += [token_start_char] * (token_end_char - prev_token_end_char)
-        all_chars_to_end_chars += [prev_token_end_char - 1] * (token_start_char - prev_token_end_char)
-        all_chars_to_end_chars += [token_start_char] * (token_end_char - token_start_char)
-        prev_token_end_char = token_end_char
-
-    if prev_token_end_char != total_len:
-        all_chars_to_start_chars += [prev_token_end_char - 1] * (total_len - prev_token_end_char)
-        all_chars_to_end_chars += [prev_token_end_char - 1] * (total_len - prev_token_end_char)
-
-    assert len(all_chars_to_start_chars) == len(all_chars_to_end_chars) == total_len
-    return all_chars_to_start_chars, all_chars_to_end_chars
 
 # Preprocessing the datasets.
 def prepare_features_for_generate_pseudo_label(examples, tokenizer=None, data_args=None):
@@ -206,6 +209,7 @@ def prepare_features_for_generate_pseudo_label(examples, tokenizer=None, data_ar
 
     # Un-flatten
     return features
+
 
 def prepare_features_for_generating_multi_turn_pseudo_label(examples, tokenizer=None, data_args=None, pseudo_label_path="", max_sent_num=5):
     contexts = examples['article']
@@ -311,6 +315,7 @@ def prepare_features_for_generating_multi_turn_pseudo_label(examples, tokenizer=
 
     # Un-flatten
     return tokenized_examples
+
 
 def prepare_features_for_initializing_complex_evidence_selector(examples, tokenizer=None, data_args=None, pseudo_label_path=""):
     contexts = examples['article']
@@ -483,6 +488,85 @@ def prepare_features_for_initializing_simple_evidence_selector(examples, evidenc
     # Un-flatten
     return tokenized_examples
 
+
+def prepare_features_for_initializing_extensive_evidence_selector(examples, evidence_len=2, tokenizer=None, data_args=None, pseudo_label_path=""):
+    contexts = examples['article']
+    answers = examples['answer']
+    options = examples['options']
+    questions = examples['question']
+    example_ids = examples['example_id']
+    sent_starts = examples['article_sent_start']
+
+    all_pseudo_label = load_pseudo_label(pseudo_label_path)
+
+    pseudo_logit = all_pseudo_label['logit']
+    acc = all_pseudo_label['acc']
+    options_prob_diff = all_pseudo_label['options_prob_diff']
+
+    qa_list = []
+    labels = []
+    processed_contexts = []
+
+    for i in range(len(answers)):
+        full_context = contexts[i]
+        example_id = example_ids[i]
+
+        per_example_options_prob_diff = options_prob_diff[example_id]
+
+        processed_question = process_text(questions[i])
+
+        evidence_len = evidence_len if evidence_len <= len(pseudo_logit[example_id]) else len(pseudo_logit[example_id])
+        per_example_evidence_sent_idxs = sorted(pseudo_logit[example_id].keys(),
+                                                key=lambda x: abs(pseudo_logit[example_id][x]), reverse=True)[: evidence_len]
+
+        per_example_sent_starts = sent_starts[i]
+        per_example_sent_starts.append(len(full_context))
+
+        for evidence_sent_idx in per_example_evidence_sent_idxs:
+            sent_start = per_example_sent_starts[evidence_sent_idx]
+            sent_end = per_example_sent_starts[evidence_sent_idx + 1]
+            evidence_sent = full_context[sent_start: sent_end]
+            option_for_evidence = np.argmin(per_example_options_prob_diff[evidence_sent_idx])
+            option = process_text(options[i][option_for_evidence])
+            qa_concat = processed_question + "[SEP]"
+            qa_concat += option
+
+            processed_contexts.append(evidence_sent)
+            qa_list.append(qa_concat)
+            labels.append(1)
+
+        all_irre_sent_idxs = list(filter(lambda x: x not in per_example_evidence_sent_idxs,
+                                            list(range(len(per_example_sent_starts) - 1))))
+        negative_sent_num = evidence_len if evidence_len <= len(all_irre_sent_idxs) else len(all_irre_sent_idxs)
+        irre_options = random.sample(list(range(4)), negative_sent_num)
+        for idx, irre_sent_idx in enumerate(random.sample(all_irre_sent_idxs, negative_sent_num)):
+            sent_start = per_example_sent_starts[irre_sent_idx]
+            sent_end = per_example_sent_starts[irre_sent_idx + 1]
+            irre_sent = full_context[sent_start: sent_end]
+            option = process_text(options[i][irre_options[idx]])
+            qa_concat = processed_question + "[SEP]"
+            qa_concat += option
+
+            processed_contexts.append(irre_sent)
+            qa_list.append(qa_concat)
+            labels.append(0)
+
+
+
+    tokenized_examples = tokenizer(
+        processed_contexts,
+        qa_list,
+        truncation=True,
+        max_length=data_args.max_seq_length,
+        padding="max_length" if data_args.pad_to_max_length else False,
+    )
+
+    tokenized_examples['label'] = labels
+
+    # Un-flatten
+    return tokenized_examples
+
+
 def prepare_features_for_generating_evidence_using_selector(examples, tokenizer=None, data_args=None):
     contexts = examples['article']
     answers = examples['answer']
@@ -533,6 +617,59 @@ def prepare_features_for_generating_evidence_using_selector(examples, tokenizer=
     # Un-flatten
     return tokenized_examples
 
+
+def prepare_features_for_generating_optionwise_evidence(examples, tokenizer=None, data_args=None):
+    contexts = examples['article']
+    answers = examples['answer']
+    options = examples['options']
+    questions = examples['question']
+    example_ids = examples['example_id']
+    sent_starts = examples['article_sent_start']
+
+    qa_list = []
+    processed_contexts = []
+    all_example_ids = []
+    all_sent_idx = []
+
+    for i in range(len(answers)):
+        full_context = contexts[i]
+
+        processed_question = process_text(questions[i])
+
+
+        per_example_sent_starts = sent_starts[i]
+        per_example_sent_starts.append(len(full_context))
+
+        for j in range(len(per_example_sent_starts) - 1):
+            sent_start = per_example_sent_starts[j]
+            sent_end = per_example_sent_starts[j + 1]
+            sent = full_context[sent_start: sent_end]
+            for k in range(4):
+                option = process_text(options[i][k])
+                qa_concat = processed_question + "[SEP]"
+                qa_concat += option
+                processed_contexts.append(sent)
+                qa_list.append(qa_concat)
+                all_example_ids.append(example_ids[i]+'_'+str(k))
+                all_sent_idx.append(j)
+
+
+
+    tokenized_examples = tokenizer(
+        processed_contexts,
+        qa_list,
+        truncation=True,
+        max_length=data_args.max_seq_length,
+        padding="max_length" if data_args.pad_to_max_length else False,
+    )
+
+    tokenized_examples['example_ids'] = all_example_ids
+    tokenized_examples['sent_idx'] = all_sent_idx
+
+    # Un-flatten
+    return tokenized_examples
+
+
 def prepare_features_for_reading_evidence(examples, evidence_logits=None, pseudo_label_or_not=True, run_pseudo_label_with_options=False,
                                                             evidence_len=2, tokenizer=None, data_args=None):
     contexts = examples['article']
@@ -555,7 +692,6 @@ def prepare_features_for_reading_evidence(examples, evidence_logits=None, pseudo
         per_example_evidence_logits = evidence_logits[example_id]
         per_example_sent_starts = sent_starts[i]
         per_example_sent_starts.append(len(full_context))
-
 
         evidence_len = evidence_len if evidence_len <= len(evidence_logits[example_id]) else len(evidence_logits[example_id])
         if run_pseudo_label_with_options:
@@ -616,3 +752,62 @@ def prepare_features_for_reading_evidence(examples, evidence_logits=None, pseudo
     # Un-flatten
     return tokenized_examples
 
+
+def prepare_features_for_reading_optionwise_evidence(examples, evidence_logits=None, evidence_len=2, tokenizer=None, data_args=None):
+    contexts = examples['article']
+    answers = examples['answer']
+    options = examples['options']
+    questions = examples['question']
+    example_ids = examples['example_id']
+    sent_starts = examples['article_sent_start']
+
+    labels = []
+    qa_list = []
+    processed_contexts = []
+
+    for i in range(len(answers)):
+        full_context = contexts[i]
+
+        #label = ord(answers[i]) - ord("A")
+
+
+        question = process_text(questions[i])
+        for j in range(4):
+            labels.append(j)
+            example_id = example_ids[i] + '_' + str(j)
+            option = process_text(options[i][j])
+
+            if "_" in question:
+                qa_cat = question.replace("_", option)
+            else:
+                qa_cat = " ".join([question, option])
+            qa_cat = " ".join(whitespace_tokenize(qa_cat)[- data_args.max_qa_length:])
+            qa_list.append(qa_cat)
+
+            per_example_evidence_logits = evidence_logits[example_id]
+            per_example_sent_starts = sent_starts[i]
+            per_example_sent_starts.append(len(full_context))
+
+            evidence_len = evidence_len if evidence_len <= len(evidence_logits[example_id]) else len(evidence_logits[example_id])
+            per_example_evidence_sent_idxs = sorted(per_example_evidence_logits.keys(),
+                                                    key=lambda x: per_example_evidence_logits[x], reverse=True)[: evidence_len]
+            evidence_concat = ""
+            for evidence_sent_idx in sorted(per_example_evidence_sent_idxs):
+                sent_start = per_example_sent_starts[evidence_sent_idx]
+                sent_end = per_example_sent_starts[evidence_sent_idx + 1]
+                evidence_concat += full_context[sent_start: sent_end]
+
+            processed_contexts.append(evidence_concat)
+
+    tokenized_examples = tokenizer(
+        processed_contexts,
+        qa_cat,
+        truncation="only_first",
+        max_length=data_args.max_seq_length,
+        padding="max_length" if data_args.pad_to_max_length else False,
+    )
+
+    tokenized_examples['label'] = labels
+
+    # Un-flatten
+    return tokenized_examples

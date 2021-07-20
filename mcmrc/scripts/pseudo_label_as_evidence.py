@@ -21,36 +21,34 @@ import logging
 import os
 import sys
 from pathlib import Path
+
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dataclasses import dataclass, field
-from typing import Optional, Union
+from typing import Optional
 
 import numpy as np
-import torch
 from datasets import load_dataset
 from functools import partial
 
 import transformers
 from transformers import (
     AutoConfig,
-    AutoModelForSequenceClassification,
     AutoModelForMultipleChoice,
     AutoTokenizer,
     HfArgumentParser,
+    Trainer,
     TrainingArguments,
     set_seed,
 )
-from model.evidence_selector import AlbertForEvidenceSelection
-from transformers.tokenization_utils_base import PaddingStrategy, PreTrainedTokenizerBase
 from utils.utils_distributed_training import is_main_process
 
 from utils.hyperparam import hyperparam_path_for_initializing_evidence_selector
 from utils.initialization import setup_root_logger
-
-from trainer.trainer import Trainer
-from data_utils.collator import *
+from ..data_utils.processors import load_pseudo_label
+from ..data_utils.collator import DataCollatorForMultipleChoice
 
 logger = logging.getLogger(__name__)
+
 
 @dataclass
 class ModelArguments:
@@ -60,17 +58,6 @@ class ModelArguments:
 
     model_name_or_path: str = field(
         metadata={"help": "Path to pretrained model or model identifier from huggingface.co/models"}
-    )
-    evidence_reader_path: str = field(
-        metadata={"help": "Path to pretrained MRC system 2 for answering questions using evidence"}
-    )
-    sentence_pooling_type: Optional[str] = field(
-        default="average",
-        metadata={"help": "Pooling type to generate sentence vectors, either 'average' or 'max'"}
-    )
-    evidence_selector_type: Optional[str] = field(
-        default="simple",
-        metadata={"help": "Model type of evidence selector, 'simple' or 'complex'"}
     )
     config_name: Optional[str] = field(
         default=None, metadata={"help": "Pretrained config name or path if not the same as model_name"}
@@ -93,6 +80,7 @@ class DataTrainingArguments:
     """
     Arguments pertaining to what data we are going to input our model for training and eval.
     """
+
     pseudo_label_path: str = field(
         metadata={"help": "Path to pseudo evidence label"}
     )
@@ -126,12 +114,6 @@ class DataTrainingArguments:
                           "'middle', 'high' or 'all'. For 'dream' dataset, it should be 'plain_text'. May be more "
                           "dataset will be included."}
     )
-    evidence_len: int = field(
-        default=2,
-        metadata={
-            "help":     "number of sentences of each evidence"
-        },
-    )
     eval_dataset: Optional[str] = field(
         default="all",
         metadata={"help": "the eval dataset,'dev', 'test' or 'all' (means both 'dev' and 'test'). default: all"}
@@ -139,31 +121,38 @@ class DataTrainingArguments:
     overwrite_cache: bool = field(
         default=False, metadata={"help": "Overwrite the cached training and evaluation sets"}
     )
+    run_pseudo_label_with_options: bool = field(
+        default=False, metadata={"help": "Whether run the pseudo label with options tag"}
+    )
     preprocessing_num_workers: Optional[int] = field(
         default=None,
         metadata={"help": "The number of processes to use for the preprocessing."},
     )
+    max_evidence_len: int = field(
+        default=6,
+        metadata={"help": "The maximum length of input evidence sentences"},
+    )
     max_qa_length: int = field(
         default=64,
         metadata={
-            "help":     "The maximum total input sequence length after WordPiece tokenization. "
-                        "Sequences longer than this will be truncated, and sequences shorter "
-                        "than this will be padded."
+            "help": "The maximum total input sequence length after WordPiece tokenization. "
+                    "Sequences longer than this will be truncated, and sequences shorter "
+                    "than this will be padded."
         },
     )
     max_seq_length: int = field(
         default=512,
         metadata={
             "help": "The maximum total input sequence length after tokenization. If passed, sequences longer "
-            "than this will be truncated, sequences shorter will be padded."
+                    "than this will be truncated, sequences shorter will be padded."
         },
     )
     pad_to_max_length: bool = field(
         default=False,
         metadata={
             "help": "Whether to pad all samples to the maximum sentence length. "
-            "If False, will pad the samples dynamically when batching to the maximum length in the batch. More "
-            "efficient on GPU but very bad for TPU."
+                    "If False, will pad the samples dynamically when batching to the maximum length in the batch. More "
+                    "efficient on GPU but very bad for TPU."
         },
     )
 
@@ -200,6 +189,12 @@ def main():
 
     training_args.output_dir = checkpoint_dir
 
+    # Setup logging
+    logging.basicConfig(
+        format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
+        datefmt="%m/%d/%Y %H:%M:%S",
+        level=logging.INFO if is_main_process(training_args.local_rank) else logging.WARN,
+    )
 
     # Log on each process the small summary:
     logger.warning(
@@ -225,9 +220,7 @@ def main():
         raise ValueError("Dataset should be race or dream.")
     else:
         if data_args.dataset == 'race':
-            from utils.utils_race import prepare_features_for_initializing_simple_evidence_selector, \
-                prepare_features_for_initializing_complex_evidence_selector, \
-                prepare_features_for_generating_evidence_using_selector, prepare_features_for_reading_evidence
+            from mcmrc.data_utils.processors import prepare_features_for_reading_evidence
         if data_args.dataset == 'dream':
             pass
 
@@ -240,7 +233,8 @@ def main():
     data_files['validation'] = data_args.validation_file if data_args.validation_file is not None else None
     data_files['test'] = data_args.test_file if data_args.test_file is not None else None
 
-    datasets = load_dataset(data_args.dataload_script, data_args.dataload_split, data_files=data_files if data_files['train'] is not None else None,
+    datasets = load_dataset(data_args.dataload_script, data_args.dataload_split,
+                            data_files=data_files if data_files['train'] is not None else None,
                             data_dir=data_args.data_dir)
 
     # Load pretrained model and tokenizer
@@ -252,112 +246,118 @@ def main():
         model_args.config_name if model_args.config_name else model_args.model_name_or_path,
         cache_dir=model_args.cache_dir,
     )
-    config.pooling_type = model_args.sentence_pooling_type
     tokenizer = AutoTokenizer.from_pretrained(
         model_args.tokenizer_name if model_args.tokenizer_name else model_args.model_name_or_path,
         cache_dir=model_args.cache_dir,
         use_fast=model_args.use_fast_tokenizer,
     )
-    evidence_selector = AlbertForEvidenceSelection.from_pretrained(
+    model = AutoModelForMultipleChoice.from_pretrained(
         model_args.model_name_or_path,
         from_tf=bool(".ckpt" in model_args.model_name_or_path),
         config=config,
         cache_dir=model_args.cache_dir,
     )
 
-    evidence_reader = AutoModelForMultipleChoice.from_pretrained(
-        model_args.evidence_reader_path,
-        from_tf=bool(".ckpt" in model_args.model_name_or_path),
-        config=config,
-        cache_dir=model_args.cache_dir,
-    )
-
-
     if training_args.do_train:
         column_names = datasets["train"].column_names
     else:
         column_names = datasets["validation"].column_names
-    pprepare_features_for_initializing_evidence_selector = partial(prepare_features_for_initializing_complex_evidence_selector,
-                                    tokenizer=tokenizer, data_args=data_args, pseudo_label_path=data_args.pseudo_label_path)
 
+    all_pseudo_label = load_pseudo_label(data_args.pseudo_label_path)
 
-    initializing_evidence_selector_datasets = datasets.map(
-        pprepare_features_for_initializing_evidence_selector,
-        batched=True,
-        num_proc=data_args.preprocessing_num_workers,
-        remove_columns=column_names,
-        load_from_cache_file=not data_args.overwrite_cache,
-    )
-    pprepare_features_for_generating_evidence_using_selector = partial(prepare_features_for_generating_evidence_using_selector,
-                                tokenizer=tokenizer, data_args=data_args)
-
-    pprepare_features_for_reading_evidence = partial(prepare_features_for_reading_evidence, pseudo_label_or_not=False, tokenizer=tokenizer, data_args=data_args)
-
-
-
+    if data_args.run_pseudo_label_with_options:
+        pseudo_logit = all_pseudo_label['options_prob_diff']
+    else:
+        pseudo_logit = all_pseudo_label['logit']
+    acc = all_pseudo_label['acc']
 
     # Data collator
-    data_collator = DataCollatorForInitializingComplexEvidenceSelector(tokenizer=tokenizer)
+    data_collator = DataCollatorForMultipleChoice(tokenizer=tokenizer)
 
+    # Metric
+    def compute_metrics(eval_predictions):
+        predictions, label_ids = eval_predictions
+        preds = np.argmax(predictions, axis=1)
+        return {"accuracy": (preds == label_ids).astype(np.float32).mean().item()}
 
-    # Initialize our Trainer
-    trainer = Trainer(
-        model=evidence_selector,
-        args=training_args,
-        train_dataset=initializing_evidence_selector_datasets["train"] if training_args.do_train else None,
-        eval_dataset=initializing_evidence_selector_datasets["validation"] if training_args.do_eval else None,
-        tokenizer=tokenizer,
-        data_collator=data_collator,
-        compute_metrics=None,
-    )
-
-    if training_args.do_train:
-        train_result = trainer.train()
-
-        output_train_file = os.path.join(training_args.output_dir, "train_results.txt")
-        with open(output_train_file, "w") as writer:
-            logger.info("***** Train results *****")
-            for key, value in sorted(train_result.metrics.items()):
-                logger.info(f"  {key} = {value}")
-                writer.write(f"{key} = {value}\n")
-
-    # Evaluation
-    # To use the best checkpoint model at end, use the aruguments
-    # load_best_model_at_end, metric_for_best_model, evaluation_strategy steps
-    # --load_best_model_at_end \
-    # --metric_for_best_model accuracy \
-    # --evaluation_strategy steps \
     eval_on_dev = (data_args.eval_dataset == "all" or data_args.eval_dataset == "dev") and training_args.do_eval
     eval_on_test = (data_args.eval_dataset == "all" or data_args.eval_dataset == "test") and training_args.do_eval
 
+    train_results = {}
+    eval_results = {}
+    test_results = {}
+    for evidence_num in range(1, data_args.max_evidence_len + 1):
+
+        pprepare_features_for_using_pseudo_label_as_evidence = partial(prepare_features_for_reading_evidence,
+                                                                       run_pseudo_label_with_options=data_args.run_pseudo_label_with_options,
+                                                                       evidence_logits=pseudo_logit,
+                                                                       evidence_len=evidence_num,
+                                                                       tokenizer=tokenizer, data_args=data_args)
+        tokenized_datasets = datasets.map(
+            pprepare_features_for_using_pseudo_label_as_evidence,
+            batched=True,
+            num_proc=data_args.preprocessing_num_workers,
+            remove_columns=column_names,
+            load_from_cache_file=not data_args.overwrite_cache,
+        )
+
+        # Initialize our Trainer
+        trainer = Trainer(
+            model=model,
+            args=training_args,
+            train_dataset=tokenized_datasets["train"] if training_args.do_train else None,
+            eval_dataset=tokenized_datasets["validation"] if training_args.do_eval else None,
+            tokenizer=tokenizer,
+            data_collator=data_collator,
+            compute_metrics=compute_metrics,
+        )
+
+        if training_args.do_train:
+            train_result = trainer.train(
+                model_path=model_args.model_name_or_path if os.path.isdir(model_args.model_name_or_path) else None
+            )
+            trainer.save_model()  # Saves the tokenizer too for easy upload
+
+            # Need to save the state, since Trainer.save_model saves only the tokenizer with the model
+            trainer.state.save_to_json(
+                os.path.join(training_args.output_dir, f"evidence_{evidence_num}_trainer_state.json"))
+            for key in list(train_result.metric.keys()):
+                train_results[f'evidence{evidence_num}_{key}'] = train_result.metric[key]
+
+        if eval_on_dev:
+            logger.info("*** Evaluate ***")
+            results = trainer.evaluate(eval_dataset=tokenized_datasets["validation"])
+            for key in list(results.keys()):
+                eval_results[f'evidence{evidence_num}_{key}'] = results[key]
+
+        if eval_on_test:
+            logger.info("*** Test ***")
+            results = trainer.evaluate(eval_dataset=tokenized_datasets["test"])
+            for key in list(results.keys()):
+                test_results[f'evidence{evidence_num}_{key}'] = results[key]
+
     if eval_on_dev:
-        logger.info("*** Evaluate ***")
-
-        results = trainer.evaluate(initializing_evidence_selector_datasets["validation"]).metrics
-        fulleval_results = trainer.evaluate_with_explicit_reader(evidence_reader, datasets["validation"], pprepare_features_for_reading_evidence,
-                                                                 initializing_evidence_selector_datasets["validation"],
-                                                                 evidence_generating_data_collator=data_collator)
-
-        metrics = {**results, **fulleval_results}
         output_eval_file = os.path.join(training_args.output_dir, "eval_results.txt")
-        with open(output_eval_file, "w") as writer:
-            logger.info("***** Eval results *****")
-            for key, value in sorted(metrics.items()):
-                logger.info(f"  {key} = {value}")
-                writer.write(f"{key} = {value}\n")
+        if trainer.is_world_process_zero():
+            with open(output_eval_file, "w") as writer:
+                logger.info("***** Eval results *****")
+                for key, value in sorted(eval_results.items()):
+                    logger.info(f"  {key} = {value}")
+                    writer.write(f"{key} = {value}\n")
+
     if eval_on_test:
-        logger.info("*** Test ***")
-
-        results = trainer.evaluate(initializing_evidence_selector_datasets["test"]).metrics
-        fulleval_results = trainer.evaluate_with_explicit_reader(evidence_reader, datasets["test"], pprepare_features_for_reading_evidence,
-                                                                 initializing_evidence_selector_datasets["test"],
-                                                                 evidence_generating_data_collator=data_collator)
-
-        metrics = {**results, **fulleval_results}
         output_test_file = os.path.join(training_args.output_dir, "test_results.txt")
         with open(output_test_file, "w") as writer:
             logger.info("***** Test results *****")
-            for key, value in sorted(metrics.items()):
+            for key, value in sorted(test_results.items()):
+                logger.info(f"  {key} = {value}")
+                writer.write(f"{key} = {value}\n")
+
+    if training_args.do_train:
+        output_train_file = os.path.join(training_args.output_dir, "train_results.txt")
+        with open(output_train_file, "w") as writer:
+            logger.info("***** Train results *****")
+            for key, value in sorted(train_results.items()):
                 logger.info(f"  {key} = {value}")
                 writer.write(f"{key} = {value}\n")
 

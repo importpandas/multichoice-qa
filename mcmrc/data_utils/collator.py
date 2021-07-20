@@ -1,19 +1,9 @@
-import logging
-import os
-import sys
-from pathlib import Path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dataclasses import dataclass, field
 from typing import Optional, Union
-
-import numpy as np
 import torch
-from datasets import load_dataset
-from functools import partial
-
 import transformers
 from transformers.tokenization_utils_base import PaddingStrategy, PreTrainedTokenizerBase
-from utils.utils_distributed_training import is_main_process
+
 
 @dataclass
 class DataCollatorForGeneratingEvidenceLabel:
@@ -54,7 +44,7 @@ class DataCollatorForGeneratingEvidenceLabel:
         labels = [feature.pop(label_name) for feature in features]
         flattened_features = [
             [{k: v[i] for k, v in feature.items() if k not in ["example_ids", "sent_bound_token", "sent_sequence"]}
-                                                    for i in range(num_choices)] for feature in features
+             for i in range(num_choices)] for feature in features
         ]
         flattened_features = sum(flattened_features, [])
 
@@ -76,6 +66,7 @@ class DataCollatorForGeneratingEvidenceLabel:
         batch["labels"] = torch.tensor(labels, dtype=torch.int64)
 
         return batch
+
 
 @dataclass
 class DataCollatorForMultipleChoice:
@@ -133,6 +124,7 @@ class DataCollatorForMultipleChoice:
         batch["labels"] = torch.tensor(labels, dtype=torch.int64)
         return batch
 
+
 @dataclass
 class DataCollatorForInitializingEvidenceSelector:
     """
@@ -179,6 +171,7 @@ class DataCollatorForInitializingEvidenceSelector:
         # Add back labels
         batch["labels"] = torch.tensor(labels, dtype=torch.int64)
         return batch
+
 
 @dataclass
 class DataCollatorForInitializingComplexEvidenceSelector:
@@ -237,6 +230,7 @@ class DataCollatorForInitializingComplexEvidenceSelector:
         batch['example_ids'] = example_ids
         return batch
 
+
 @dataclass
 class DataCollatorForGeneratingEvidenceUsingSelector:
     """
@@ -270,7 +264,6 @@ class DataCollatorForGeneratingEvidenceUsingSelector:
     pad_to_multiple_of: Optional[int] = None
 
     def __call__(self, features):
-
         padding_features = [
             {k: v for k, v in feature.items() if k not in ["example_ids", "sent_idx"]} for feature in features
         ]
@@ -287,5 +280,3 @@ class DataCollatorForGeneratingEvidenceUsingSelector:
         batch['sent_idx'] = [feature['sent_idx'] for feature in features]
         # Add back labels
         return batch
-
-

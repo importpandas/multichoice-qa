@@ -20,36 +20,35 @@ Fine-tuning the library models for multiple choice.
 import logging
 import os
 import sys
-from pathlib import Path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dataclasses import dataclass, field
-from typing import Optional, Union
+from typing import Optional
 
-import numpy as np
 import torch
+import torch.nn.functional as F
+from torch.utils.data.dataloader import DataLoader
+from torch.utils.data.sampler import SequentialSampler
+import tqdm
+
 from datasets import load_dataset
 from functools import partial
 
 import transformers
 from transformers import (
     AutoConfig,
-    AutoModelForSequenceClassification,
     AutoModelForMultipleChoice,
     AutoTokenizer,
     HfArgumentParser,
     TrainingArguments,
+    default_data_collator,
     set_seed,
 )
-from transformers.tokenization_utils_base import PaddingStrategy, PreTrainedTokenizerBase
 from utils.utils_distributed_training import is_main_process
+from ..data_utils.collator import DataCollatorForGeneratingEvidenceLabel
 
-from utils.hyperparam import hyperparam_path_for_initializing_evidence_selector
-from utils.initialization import setup_root_logger
 
-from trainer.trainer import Trainer
-from data_utils.collator import *
 
 logger = logging.getLogger(__name__)
+
 
 @dataclass
 class ModelArguments:
@@ -59,9 +58,6 @@ class ModelArguments:
 
     model_name_or_path: str = field(
         metadata={"help": "Path to pretrained model or model identifier from huggingface.co/models"}
-    )
-    evidence_reader_path: str = field(
-        metadata={"help": "Path to pretrained MRC system 2 for answering questions using evidence"}
     )
     config_name: Optional[str] = field(
         default=None, metadata={"help": "Pretrained config name or path if not the same as model_name"}
@@ -87,13 +83,10 @@ class DataTrainingArguments:
     pseudo_label_path: str = field(
         metadata={"help": "Path to pseudo evidence label"}
     )
-    filter_label_with_ground_truth: bool = field(
-        default=True,
-        metadata={"help": "Whether to use pseudo label filtered by ground truth"},
-    )
-    train_with_adversarial_examples: bool = field(
-        default=False,
-        metadata={"help": "Whether to use pseudo label filtered by ground truth"},
+    dataload_script: str = field(
+        metadata={"help": "path to the dataset processing script with the dataset builder. Can be either:a local path "
+                          "to processing script or the directory containing the script (if the script has the same "
+                          "name as the directory),e.g. ``'./dataset/squad'`` or ``'./dataset/squad/squad.py'"}
     )
     train_file: Optional[str] = field(default=None, metadata={"help": "The input training data file (a text file)."})
     validation_file: Optional[str] = field(
@@ -109,23 +102,11 @@ class DataTrainingArguments:
         default='race',
         metadata={"help": "name of the used dataset, race or dream. Default: race."}
     )
-    dataload_script: Optional[str] = field(
-        default=None,
-        metadata={"help": "path to the dataset processing script with the dataset builder. Can be either:a local path "
-                          "to processing script or the directory containing the script (if the script has the same "
-                          "name as the directory),e.g. ``'./dataset/squad'`` or ``'./dataset/squad/squad.py'"}
-    )
     dataload_split: Optional[str] = field(
         default=None,
         metadata={"help": "the type (or say 'category') needs to be loaded. For 'race' dataset, it can be chosen from "
                           "'middle', 'high' or 'all'. For 'dream' dataset, it should be 'plain_text'. May be more "
                           "dataset will be included."}
-    )
-    evidence_len: int = field(
-        default=2,
-        metadata={
-            "help":     "number of sentences of each evidence"
-        },
     )
     eval_dataset: Optional[str] = field(
         default="all",
@@ -171,6 +152,7 @@ class DataTrainingArguments:
             assert extension in ["csv", "json"], "`validation_file` should be a csv or a json file."
 
 
+
 def main():
     # See all possible arguments in src/transformers/training_args.py
     # or by passing the --help flag to this script.
@@ -184,17 +166,13 @@ def main():
     else:
         model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
-    checkpoint_dir = hyperparam_path_for_initializing_evidence_selector(model_args, data_args, training_args)
-    ckpt_dir = Path(checkpoint_dir)
-    postfix = ""
-    if training_args.do_train:
-        postfix += "_train"
-    elif training_args.do_eval:
-        postfix += "_eval"
-    setup_root_logger(ckpt_dir, training_args.local_rank, debug=False, postfix=postfix)
 
-    training_args.output_dir = checkpoint_dir
-
+    # Setup logging
+    logging.basicConfig(
+        format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
+        datefmt="%m/%d/%Y %H:%M:%S",
+        level=logging.INFO if is_main_process(training_args.local_rank) else logging.WARN,
+    )
 
     # Log on each process the small summary:
     logger.warning(
@@ -209,7 +187,7 @@ def main():
     # Set seed before initializing model.
     set_seed(training_args.seed)
 
-    # Get the [datasets]: you can either provide your own CSV/JSON/TXT training and evaluation files (see below)
+    # Get the datasets: you can either provide your own CSV/JSON/TXT training and evaluation files (see below)
     # or just provide the name of one of the public datasets available on the hub at https://huggingface.co/datasets/
     # (the dataset will be downloaded automatically from the datasets Hub).
 
@@ -220,16 +198,12 @@ def main():
         raise ValueError("Dataset should be race or dream.")
     else:
         if data_args.dataset == 'race':
-            from utils.utils_race import prepare_features_for_initializing_simple_evidence_selector, \
-                prepare_features_for_initializing_complex_evidence_selector, \
-                prepare_features_for_generating_evidence_using_selector, prepare_features_for_reading_evidence
+            from mcmrc.data_utils.processors import prepare_features_for_generating_multi_turn_pseudo_label
         if data_args.dataset == 'dream':
             pass
 
     # In distributed training, the load_dataset function guarantee that only one local process can concurrently
     # download the dataset.
-    # See more about loading any type of standard or custom dataset (from files, python dict, pandas DataFrame, etc) at
-    # https://huggingface.co/docs/datasets/loading_datasets.html.
     data_files = {}
     data_files['train'] = data_args.train_file if data_args.train_file is not None else None
     data_files['validation'] = data_args.validation_file if data_args.validation_file is not None else None
@@ -237,6 +211,8 @@ def main():
 
     datasets = load_dataset(data_args.dataload_script, data_args.dataload_split, data_files=data_files if data_files['train'] is not None else None,
                             data_dir=data_args.data_dir)
+    # See more about loading any type of standard or custom dataset (from files, python dict, pandas DataFrame, etc) at
+    # https://huggingface.co/docs/datasets/loading_datasets.html.
 
     # Load pretrained model and tokenizer
 
@@ -247,122 +223,90 @@ def main():
         model_args.config_name if model_args.config_name else model_args.model_name_or_path,
         cache_dir=model_args.cache_dir,
     )
-    if data_args.train_with_adversarial_examples:
-        config.num_labels = 3
     tokenizer = AutoTokenizer.from_pretrained(
         model_args.tokenizer_name if model_args.tokenizer_name else model_args.model_name_or_path,
         cache_dir=model_args.cache_dir,
         use_fast=model_args.use_fast_tokenizer,
     )
-    evidence_selector = AutoModelForSequenceClassification.from_pretrained(
+    model = AutoModelForMultipleChoice.from_pretrained(
         model_args.model_name_or_path,
         from_tf=bool(".ckpt" in model_args.model_name_or_path),
         config=config,
         cache_dir=model_args.cache_dir,
     )
 
-    evidence_reader = AutoModelForMultipleChoice.from_pretrained(
-        model_args.evidence_reader_path,
-        from_tf=bool(".ckpt" in model_args.model_name_or_path),
-        config=config,
-        cache_dir=model_args.cache_dir,
-    )
+    column_names = datasets["test"].column_names
 
 
-    if training_args.do_train:
-        column_names = datasets["train"].column_names
-    else:
-        column_names = datasets["validation"].column_names
-    pprepare_features_for_initializing_evidence_selector = partial(prepare_features_for_initializing_simple_evidence_selector, evidence_len=data_args.evidence_len,
-                                tokenizer=tokenizer, data_args=data_args, pseudo_label_path=data_args.pseudo_label_path)
-    initializing_evidence_selector_datasets = datasets.map(
-        pprepare_features_for_initializing_evidence_selector,
+    pprepare_features_for_generate_pseudo_label = partial(prepare_features_for_generating_multi_turn_pseudo_label, tokenizer=tokenizer, data_args=data_args,
+                                                          pseudo_label_path=data_args.pseudo_label_path)
+    tokenized_datasets = datasets.map(
+        pprepare_features_for_generate_pseudo_label,
         batched=True,
         num_proc=data_args.preprocessing_num_workers,
         remove_columns=column_names,
         load_from_cache_file=not data_args.overwrite_cache,
     )
-    pprepare_features_for_generating_evidence_using_selector = partial(prepare_features_for_generating_evidence_using_selector,
-                                tokenizer=tokenizer, data_args=data_args)
-    evidence_generating_datasets = {k: datasets[k].map(
-        pprepare_features_for_generating_evidence_using_selector,
-        batched=True,
-        num_proc=data_args.preprocessing_num_workers,
-        remove_columns=column_names,
-        load_from_cache_file=not data_args.overwrite_cache,
-    ) for k in datasets.keys() if k != "train"}
-
-    pprepare_features_for_reading_evidence = partial(prepare_features_for_reading_evidence, pseudo_label_or_not=False, tokenizer=tokenizer, data_args=data_args)
-
-
-
 
     # Data collator
-    data_collator = DataCollatorForInitializingEvidenceSelector(tokenizer=tokenizer)
-
-    # Metric
-    def compute_metrics(eval_predictions):
-        predictions, label_ids = eval_predictions
-        preds = np.argmax(predictions, axis=1)
-        return {"accuracy": (preds == label_ids).astype(np.float32).mean().item()}
-
-    # Initialize our Trainer
-    trainer = Trainer(
-        model=evidence_selector,
-        args=training_args,
-        train_dataset=initializing_evidence_selector_datasets["train"] if training_args.do_train else None,
-        eval_dataset=initializing_evidence_selector_datasets["validation"] if training_args.do_eval else None,
-        tokenizer=tokenizer,
-        data_collator=data_collator,
-        compute_metrics=compute_metrics,
+    data_collator = (
+        default_data_collator if data_args.pad_to_max_length else DataCollatorForGeneratingEvidenceLabel(tokenizer=tokenizer)
     )
 
-    if training_args.do_train:
-        train_result = trainer.train()
+    device = training_args.device
+    model.to(device)
+    model.eval()
+    if training_args.n_gpu > 1:
+        model = torch.nn.DataParallel(model)
 
-        output_train_file = os.path.join(training_args.output_dir, "train_results.txt")
-        with open(output_train_file, "w") as writer:
-            logger.info("***** Train results *****")
-            for key, value in sorted(train_result.metrics.items()):
-                logger.info(f"  {key} = {value}")
-                writer.write(f"{key} = {value}\n")
+    pseudo_label = {}
+    acc = {}
+    for train_test_or_eval, dataset in tokenized_datasets.items():
+        dataloader = DataLoader(
+            dataset,
+            batch_size=training_args.eval_batch_size,
+            sampler=SequentialSampler(dataset),
+            collate_fn=data_collator,
+            num_workers=0
+        )
 
-    # Evaluation
-    # To use the best checkpoint model at end, use the aruguments
-    # load_best_model_at_end, metric_for_best_model, evaluation_strategy steps
-    # --load_best_model_at_end \
-    # --metric_for_best_model accuracy \
-    # --evaluation_strategy steps \
-    eval_on_dev = (data_args.eval_dataset == "all" or data_args.eval_dataset == "dev") and training_args.do_eval
-    eval_on_test = (data_args.eval_dataset == "all" or data_args.eval_dataset == "test") and training_args.do_eval
+        pseudo_label_split = {}
+        acc_split = {}
+        print(f'{train_test_or_eval}', len(dataloader))
+        for step, batch in tqdm.tqdm(enumerate(dataloader)):
+            with torch.no_grad():
+                origin_inputs = {
+                    "input_ids": batch['input_ids'].to(device),
+                    "attention_mask": batch['attention_mask'].to(device),
+                    "token_type_ids": batch['token_type_ids'].to(device),
+                }
+                origin_logits = model(**origin_inputs).logits.detach()
 
-    if eval_on_dev:
-        logger.info("*** Evaluate ***")
-        results = trainer.evaluate(initializing_evidence_selector_datasets["validation"]).metrics
-        fulleval_results = trainer.evaluate_with_explicit_reader(evidence_reader, datasets["validation"], pprepare_features_for_reading_evidence,
-                                                                 evidence_generating_datasets["validation"])
+            example_ids = batch['example_ids']
+            sent_sequence = batch['sent_sequence']
+            batch_loss = F.cross_entropy(origin_logits, batch['labels'], reduction='none')
+            for example_id, one_sent_sequence, loss in zip(example_ids, sent_sequence, batch_loss):
+                if example_id not in pseudo_label_split.keys():
+                    acc_split[example_id] = loss
+                    pseudo_label_split[example_id] = {k: 0 for k in one_sent_sequence}
+                else:
+                    if loss < acc_split[example_id]:
+                        acc_split[example_id] = loss
+                        pseudo_label_split[example_id] = {k: 0 for k in one_sent_sequence}
 
-        metrics = {**results, **fulleval_results}
-        output_eval_file = os.path.join(training_args.output_dir, "eval_results.txt")
-        with open(output_eval_file, "w") as writer:
-            logger.info("***** Eval results *****")
-            for key, value in sorted(metrics.items()):
-                logger.info(f"  {key} = {value}")
-                writer.write(f"{key} = {value}\n")
-    if eval_on_test:
-        logger.info("*** Test ***")
 
-        results = trainer.evaluate(initializing_evidence_selector_datasets["test"]).metrics
-        fulleval_results = trainer.evaluate_with_explicit_reader(evidence_reader, datasets["test"], pprepare_features_for_reading_evidence,
-                                                                 evidence_generating_datasets["test"])
 
-        metrics = {**results, **fulleval_results}
-        output_test_file = os.path.join(training_args.output_dir, "test_results.txt")
-        with open(output_test_file, "w") as writer:
-            logger.info("***** Test results *****")
-            for key, value in sorted(metrics.items()):
-                logger.info(f"  {key} = {value}")
-                writer.write(f"{key} = {value}\n")
+
+            #acc_split[example_ids[i]] = 1 if torch.argmax(one_example_logit).item() == one_example_label.item() else 0
+
+        pseudo_label[train_test_or_eval] = pseudo_label_split
+        acc[train_test_or_eval] = acc_split
+
+    label = {
+        'pseudo_label': pseudo_label,
+        'acc': acc
+    }
+    torch.save(label, f"mt_{data_args.pseudo_label_path.split('/')[-1]}")
 
 
 def _mp_fn(index):

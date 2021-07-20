@@ -1,4 +1,4 @@
-from utils_race import process_text
+from .processors import process_text
 
 
 # Preprocessing the datasets.

@@ -1,47 +1,40 @@
 import os, re
 import logging
-import math
 from functools import partial
 import timeit
 import collections
 import time
 
-from transformers import AdamW, get_linear_schedule_with_warmup, get_constant_schedule, \
-    get_polynomial_decay_schedule_with_warmup
+from transformers import AdamW, get_linear_schedule_with_warmup
 
-from transformers.data.data_collator import DataCollator, DataCollatorWithPadding, default_data_collator
+from transformers.data.data_collator import DataCollatorWithPadding, default_data_collator
 
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 import torch
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 from torch.utils.data.distributed import DistributedSampler
 
-from trainer.common import Timer
-from trainer.trainer_utils import compute_mc_metrics
-from data_utils.collator import DataCollatorForMultipleChoice, DataCollatorForGeneratingEvidenceUsingSelector
+from .common import Timer
+from .trainer_utils import compute_mc_metrics
+from .checkpoint import save_checkpoint
 
-from trainer.checkpoint import save_checkpoint
+from ..data_utils.collator import DataCollatorForMultipleChoice, DataCollatorForGeneratingEvidenceUsingSelector
+
+
 
 from utils.param import iter_parameters_of_optimizer
 
 from packaging import version
 from transformers.trainer_pt_utils import (
-    DistributedLengthGroupedSampler,
-    DistributedSamplerWithLoop,
     DistributedTensorGatherer,
-    LabelSmoother,
-    LengthGroupedSampler,
     SequentialDistributedSampler,
-    distributed_broadcast_scalars,
-    distributed_concat,
-    get_parameter_names,
     nested_concat,
     nested_detach,
     nested_numpify
 )
 from transformers.trainer_utils import EvalPrediction, denumpify_detensorize, PredictionOutput, speed_metrics, TrainOutput
-from model.evidence_selector import AlbertForEvidenceSelection
+from mcmrc.model.evidence_selector import AlbertForEvidenceSelection
 
 _is_native_amp_available = False
 if version.parse(torch.__version__) >= version.parse("1.6"):
@@ -628,7 +621,7 @@ class Trainer:
 
 
         metrics = {}
-        for evidence_len in [1, 2, 3, 4, 5]:
+        for evidence_len in [1, 2, 3, 4]:
             pprepare_feature_func = partial(prepare_feature_func, evidence_len=evidence_len, evidence_logits=evidence_logits)
             output = self.evidence_reading(evidence_reader, eval_dataset,  pprepare_feature_func, metric_key_prefix=f'fulleval{evidence_len}')
             metrics = {**metrics, **output}

@@ -8,7 +8,7 @@ import spacy
 from pathlib import Path
 
 import datasets
-from utils.utils_race import process_text
+from mcmrc.data_utils.processors import process_text
 
 
 _CITATION = """\

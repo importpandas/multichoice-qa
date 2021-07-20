@@ -20,12 +20,8 @@ Fine-tuning the library models for multiple choice.
 import logging
 import os
 import sys
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from dataclasses import dataclass, field
-from typing import Optional, Union
 
 import numpy as np
-import torch
 from datasets import load_dataset
 from functools import partial
 from pathlib import Path
@@ -42,115 +38,16 @@ from transformers import (
     set_seed,
 )
 
-from model.auto_model import AutoModelForMultipleChoice
+from ..model.auto_model import AutoModelForMultipleChoice
 
-from transformers.tokenization_utils_base import PaddingStrategy, PreTrainedTokenizerBase
 from utils.utils_distributed_training import is_main_process
 from utils.hyperparam import hyperparam_path_for_baseline
 from utils.initialization import setup_root_logger
 
-from data_utils.collator import DataCollatorForMultipleChoice
+from ..data_utils.collator import DataCollatorForMultipleChoice
+from ..cli.argument import BasicModelArguments, BasicDataTrainingArguments
 
 logger = logging.getLogger(__name__)
-
-@dataclass
-class ModelArguments:
-    """
-    Arguments pertaining to which model/config/tokenizer we are going to fine-tune from.
-    """
-    model_name_or_path: str = field(
-        metadata={"help": "Path to pretrained model or model identifier from huggingface.co/models"}
-    )
-    config_name: Optional[str] = field(
-        default=None, metadata={"help": "Pretrained config name or path if not the same as model_name"}
-    )
-    tokenizer_name: Optional[str] = field(
-        default=None, metadata={"help": "Pretrained tokenizer name or path if not the same as model_name"}
-    )
-    cache_dir: Optional[str] = field(
-        default=None,
-        metadata={"help": "Where do you want to store the pretrained models downloaded from huggingface.co"},
-    )
-    use_fast_tokenizer: bool = field(
-        default=True,
-        metadata={"help": "Whether to use one of the fast tokenizer (backed by the tokenizers library) or not."},
-    )
-
-
-@dataclass
-class DataTrainingArguments:
-    """
-    Arguments pertaining to what data we are going to input our model for training and eval.
-    """
-
-    train_file: Optional[str] = field(default=None, metadata={"help": "The input training data file (a text file)."})
-    validation_file: Optional[str] = field(
-        default=None,
-        metadata={"help": "An optional input evaluation data file to evaluate the perplexity on (a text file)."},
-    )
-    test_file: Optional[str] = field(
-        default=None,
-        metadata={"help": "An optional input test data file"}
-    )
-    data_dir: Optional[str] = field(default=None, metadata={"help": "the local path of input data"})
-    dataset: str = field(
-        default='race',
-        metadata={"help": "name of the used dataset, race or dream. Default: race."}
-    )
-    dataload_script: Optional[str] = field(
-        default=None,
-        metadata={"help": "path to the dataset processing script with the dataset builder. Can be either:a local path "
-                          "to processing script or the directory containing the script (if the script has the same "
-                          "name as the directory),e.g. ``'./dataset/squad'`` or ``'./dataset/squad/squad.py'"}
-    )
-    dataload_split: Optional[str] = field(
-        default=None,
-        metadata={"help": "the type (or say 'category') needs to be loaded. For 'race' dataset, it can be chosen from "
-                          "'middle', 'high' or 'all'. For 'dream' dataset, it should be 'plain_text'. May be more "
-                          "dataset will be included."}
-    )
-    eval_dataset: Optional[str] = field(
-        default="all",
-        metadata={"help": "the eval dataset,'dev', 'test' or 'all' (means both 'dev' and 'test'). default: all"}
-    )
-    overwrite_cache: bool = field(
-        default=False, metadata={"help": "Overwrite the cached training and evaluation sets"}
-    )
-    preprocessing_num_workers: Optional[int] = field(
-        default=None,
-        metadata={"help": "The number of processes to use for the preprocessing."},
-    )
-    max_qa_length: int = field(
-        default=64,
-        metadata={
-            "help":     "The maximum total input sequence length after WordPiece tokenization. "
-                        "Sequences longer than this will be truncated, and sequences shorter "
-                        "than this will be padded."
-        },
-    )
-    max_seq_length: int = field(
-        default=512,
-        metadata={
-            "help": "The maximum total input sequence length after tokenization. If passed, sequences longer "
-            "than this will be truncated, sequences shorter will be padded."
-        },
-    )
-    pad_to_max_length: bool = field(
-        default=False,
-        metadata={
-            "help": "Whether to pad all samples to the maximum sentence length. "
-            "If False, will pad the samples dynamically when batching to the maximum length in the batch. More "
-            "efficient on GPU but very bad for TPU."
-        },
-    )
-
-    def __post_init__(self):
-        if self.train_file is not None:
-            extension = self.train_file.split(".")[-1]
-            assert extension in ["csv", "json"], "`train_file` should be a csv or a json file."
-        if self.validation_file is not None:
-            extension = self.validation_file.split(".")[-1]
-            assert extension in ["csv", "json"], "`validation_file` should be a csv or a json file."
 
 
 def main():
@@ -158,7 +55,7 @@ def main():
     # or by passing the --help flag to this script.
     # We now keep distinct sets of args, for a cleaner separation of concerns.
 
-    parser = HfArgumentParser((ModelArguments, DataTrainingArguments, TrainingArguments))
+    parser = HfArgumentParser((BasicModelArguments, BasicDataTrainingArguments, TrainingArguments))
     if len(sys.argv) == 2 and sys.argv[1].endswith(".json"):
         # If we pass only one argument to the script and it's the path to a json file,
         # let's parse it to get our arguments.
@@ -176,17 +73,6 @@ def main():
     setup_root_logger(ckpt_dir, training_args.local_rank, debug=False, postfix=postfix)
 
     training_args.output_dir = checkpoint_dir
-
-    if (
-        os.path.exists(training_args.output_dir)
-        and os.listdir(training_args.output_dir)
-        and training_args.do_train
-        and not training_args.overwrite_output_dir
-    ):
-        raise ValueError(
-            f"Output directory ({training_args.output_dir}) already exists and is not empty."
-            "Use --overwrite_output_dir to overcome."
-        )
 
     # Log on each process the small summary:
     logger.warning(
@@ -212,9 +98,9 @@ def main():
         raise ValueError("Dataset should be race or dream.")
     else:
         if data_args.dataset == 'race':
-            from utils.utils_race import prepare_features
+            from mcmrc.data_utils.processors import prepare_features
         if data_args.dataset == 'dream':
-            from utils.utils_dream import prepare_features
+            from mcmrc.data_utils.utils_dream import prepare_features
 
     # In distributed training, the load_dataset function guarantee that only one local process can concurrently
     # download the dataset.
@@ -226,7 +112,7 @@ def main():
     data_files['test'] = data_args.test_file if data_args.test_file is not None else None
 
     datasets = load_dataset(data_args.dataload_script, data_args.dataload_split, data_files=data_files if data_files['train'] is not None else None,
-                            data_dir=data_args.data_dir)
+                            data_dir=data_args.data_dir, download_mode="force_redownload")
 
     # Load pretrained model and tokenizer
 
