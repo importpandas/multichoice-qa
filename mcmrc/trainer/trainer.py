@@ -412,8 +412,6 @@ class Trainer:
 
         return TrainOutput(global_step, tr_loss / global_step, metrics)
 
-
-
     def evaluate(self, dataset, data_collator=None, description="", metric_key_prefix="eval", compute_metrics=None):
         # predicition with single device
 
@@ -505,12 +503,10 @@ class Trainer:
 
         evidence_reading_data_collator = DataCollatorForMultipleChoice(tokenizer=self.tokenizer)
 
-        column_names = eval_dataset.column_names
-
         processed_datasets = eval_dataset.map(
             prepare_feature_func,
             batched=True,
-            remove_columns=column_names,
+            remove_columns=eval_dataset.column_names,
             load_from_cache_file=False,
         )
 
@@ -535,8 +531,8 @@ class Trainer:
             self,
             evidence_reader,
             eval_dataset,
-            prepare_feature_func,
-            evidence_generating_dataset,
+            feature_func_for_evidence_generating,
+            feature_func_for_evidence_reading,
             evidence_generating_data_collator=None,
             ignore_keys: Optional[List[str]] = None,
     ) -> Dict[str, float]:
@@ -552,9 +548,10 @@ class Trainer:
             eval_dataset (:obj:`Dataset`, `optional`):
                 Pass a dataset if you wish to override :obj:`self.eval_dataset`. If it is an :obj:`datasets.Dataset`,
                 columns not accepted by the ``model.forward()`` method are automatically removed. It must implement the
+                :param feature_func_for_evidence_generating:
+                :param feature_func_for_evidence_reading:
+                :param evidence_generating_data_collator:
                 :param ignore_keys:
-                :param evidence_generating_dataset:
-                :param prepare_feature_func:
                 :param eval_dataset:
                 :param evidence_reader:
                 :obj:`__len__` method.
@@ -570,8 +567,15 @@ class Trainer:
             dictionary also contains the epoch number which comes from the training state.
         """
         # memory metrics - must set up as early as possible
-        evidence_generating_data_collator = DataCollatorForGeneratingEvidenceUsingSelector(tokenizer=self.tokenizer) \
-                                            if evidence_generating_data_collator is None else evidence_generating_data_collator
+        evidence_generating_data_collator = DataCollatorForGeneratingEvidenceUsingSelector(tokenizer=self.tokenizer)
+
+        evidence_generating_dataset = eval_dataset.map(
+            feature_func_for_evidence_generating,
+            batched=True,
+            num_proc=4,
+            remove_columns=eval_dataset.column_names,
+            load_from_cache_file=False,
+        )
 
         if evidence_generating_dataset is not None and not isinstance(evidence_generating_dataset,
                                                                       collections.abc.Sized):
@@ -619,10 +623,9 @@ class Trainer:
                         if idx != -1:
                             evidence_logits[example_id][idx] = probs[i][idx].item()
 
-
         metrics = {}
         for evidence_len in [1, 2, 3, 4]:
-            pprepare_feature_func = partial(prepare_feature_func, evidence_len=evidence_len, evidence_logits=evidence_logits)
+            pprepare_feature_func = partial(feature_func_for_evidence_reading, evidence_len=evidence_len, evidence_logits=evidence_logits)
             output = self.evidence_reading(evidence_reader, eval_dataset,  pprepare_feature_func, metric_key_prefix=f'fulleval{evidence_len}')
             metrics = {**metrics, **output}
 

@@ -236,9 +236,11 @@ def main():
     if eval_on_dev:
         logger.info("*** Evaluate ***")
         results = trainer.evaluate(initializing_evidence_selector_datasets["validation"]).metrics
-        fulleval_results = trainer.evaluate_with_explicit_reader(evidence_reader, datasets["validation"],
-                                                                 pprepare_features_for_reading_optionwise_evidence,
-                                                                 evidence_generating_datasets["validation"])
+        fulleval_results = trainer.evaluate_with_explicit_reader(evidence_reader=evidence_reader,
+                                                                 eval_dataset=datasets["validation"],
+                                                                 feature_func_for_evidence_generating=pprepare_features_for_reading_optionwise_evidence,
+                                                                 feature_func_for_evidence_reading=pprepare_features_for_generating_optionwise_evidence
+                                                                 )
 
         metrics = {**results, **fulleval_results}
         output_eval_file = os.path.join(training_args.output_dir, "eval_results.txt")
@@ -251,9 +253,11 @@ def main():
         logger.info("*** Test ***")
 
         results = trainer.evaluate(initializing_evidence_selector_datasets["test"]).metrics
-        fulleval_results = trainer.evaluate_with_explicit_reader(evidence_reader, datasets["test"],
-                                                                 pprepare_features_for_reading_optionwise_evidence,
-                                                                 evidence_generating_datasets["test"])
+        fulleval_results = trainer.evaluate_with_explicit_reader(evidence_reader=evidence_reader,
+                                                                 eval_dataset=datasets["test"],
+                                                                 feature_func_for_evidence_generating=pprepare_features_for_reading_optionwise_evidence,
+                                                                 feature_func_for_evidence_reading=pprepare_features_for_generating_optionwise_evidence
+                                                                 )
 
         metrics = {**results, **fulleval_results}
         output_test_file = os.path.join(training_args.output_dir, "test_results.txt")

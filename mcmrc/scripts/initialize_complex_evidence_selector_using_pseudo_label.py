@@ -45,6 +45,7 @@ from ..cli.argument import BasicModelArguments, BasicDataTrainingArguments
 
 logger = logging.getLogger(__name__)
 
+
 @dataclass
 class ModelArguments(BasicModelArguments):
     """
@@ -79,7 +80,7 @@ class DataTrainingArguments(BasicDataTrainingArguments):
     evidence_len: int = field(
         default=2,
         metadata={
-            "help":     "number of sentences of each evidence"
+            "help": "number of sentences of each evidence"
         },
     )
 
@@ -107,7 +108,6 @@ def main():
     setup_root_logger(ckpt_dir, training_args.local_rank, debug=False, postfix=postfix)
 
     training_args.output_dir = checkpoint_dir
-
 
     # Log on each process the small summary:
     logger.warning(
@@ -147,7 +147,8 @@ def main():
     data_files['validation'] = data_args.validation_file if data_args.validation_file is not None else None
     data_files['test'] = data_args.test_file if data_args.test_file is not None else None
 
-    datasets = load_dataset(data_args.dataload_script, data_args.dataload_split, data_files=data_files if data_files['train'] is not None else None,
+    datasets = load_dataset(data_args.dataload_script, data_args.dataload_split,
+                            data_files=data_files if data_files['train'] is not None else None,
                             data_dir=data_args.data_dir)
 
     # Load pretrained model and tokenizer
@@ -179,14 +180,13 @@ def main():
         cache_dir=model_args.cache_dir,
     )
 
-
     if training_args.do_train:
         column_names = datasets["train"].column_names
     else:
         column_names = datasets["validation"].column_names
-    pprepare_features_for_initializing_evidence_selector = partial(prepare_features_for_initializing_complex_evidence_selector,
-                                    tokenizer=tokenizer, data_args=data_args, pseudo_label_path=data_args.pseudo_label_path)
-
+    pprepare_features_for_initializing_evidence_selector = partial(
+        prepare_features_for_initializing_complex_evidence_selector,
+        tokenizer=tokenizer, data_args=data_args, pseudo_label_path=data_args.pseudo_label_path)
 
     initializing_evidence_selector_datasets = datasets.map(
         pprepare_features_for_initializing_evidence_selector,
@@ -195,17 +195,15 @@ def main():
         remove_columns=column_names,
         load_from_cache_file=not data_args.overwrite_cache,
     )
-    pprepare_features_for_generating_evidence_using_selector = partial(prepare_features_for_generating_evidence_using_selector,
-                                tokenizer=tokenizer, data_args=data_args)
+    pprepare_features_for_generating_evidence_using_selector = partial(
+        prepare_features_for_generating_evidence_using_selector,
+        tokenizer=tokenizer, data_args=data_args)
 
-    pprepare_features_for_reading_evidence = partial(prepare_features_for_reading_evidence, pseudo_label_or_not=False, tokenizer=tokenizer, data_args=data_args)
-
-
-
+    pprepare_features_for_reading_evidence = partial(prepare_features_for_reading_evidence, pseudo_label_or_not=False,
+                                                     tokenizer=tokenizer, data_args=data_args)
 
     # Data collator
     data_collator = DataCollatorForInitializingComplexEvidenceSelector(tokenizer=tokenizer)
-
 
     # Initialize our Trainer
     trainer = Trainer(
@@ -241,7 +239,8 @@ def main():
         logger.info("*** Evaluate ***")
 
         results = trainer.evaluate(initializing_evidence_selector_datasets["validation"]).metrics
-        fulleval_results = trainer.evaluate_with_explicit_reader(evidence_reader, datasets["validation"], pprepare_features_for_reading_evidence,
+        fulleval_results = trainer.evaluate_with_explicit_reader(evidence_reader, datasets["validation"],
+                                                                 pprepare_features_for_reading_evidence,
                                                                  initializing_evidence_selector_datasets["validation"],
                                                                  evidence_generating_data_collator=data_collator)
 
@@ -256,7 +255,8 @@ def main():
         logger.info("*** Test ***")
 
         results = trainer.evaluate(initializing_evidence_selector_datasets["test"]).metrics
-        fulleval_results = trainer.evaluate_with_explicit_reader(evidence_reader, datasets["test"], pprepare_features_for_reading_evidence,
+        fulleval_results = trainer.evaluate_with_explicit_reader(evidence_reader, datasets["test"],
+                                                                 pprepare_features_for_reading_evidence,
                                                                  initializing_evidence_selector_datasets["test"],
                                                                  evidence_generating_data_collator=data_collator)
 

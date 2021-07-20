@@ -770,7 +770,6 @@ def prepare_features_for_reading_optionwise_evidence(examples, evidence_logits=N
 
         #label = ord(answers[i]) - ord("A")
 
-
         question = process_text(questions[i])
         for j in range(4):
             labels.append(j)
@@ -801,7 +800,7 @@ def prepare_features_for_reading_optionwise_evidence(examples, evidence_logits=N
 
     tokenized_examples = tokenizer(
         processed_contexts,
-        qa_cat,
+        qa_list,
         truncation="only_first",
         max_length=data_args.max_seq_length,
         padding="max_length" if data_args.pad_to_max_length else False,
