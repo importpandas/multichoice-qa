@@ -103,6 +103,8 @@ class DataCollatorForMultipleChoice:
     def __call__(self, features):
         label_name = "label" if "label" in features[0].keys() else "labels"
         labels = [feature.pop(label_name) for feature in features]
+        if "example_ids" in features[0].keys():
+            example_ids = [feature.pop("example_ids") for feature in features]
         batch_size = len(features)
         num_choices = len(features[0]["input_ids"])
         flattened_features = [
@@ -122,6 +124,7 @@ class DataCollatorForMultipleChoice:
         batch = {k: v.view(batch_size, num_choices, -1) for k, v in batch.items()}
         # Add back labels
         batch["labels"] = torch.tensor(labels, dtype=torch.int64)
+        batch["example_ids"] = example_ids
         return batch
 
 

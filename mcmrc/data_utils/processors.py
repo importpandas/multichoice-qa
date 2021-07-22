@@ -764,6 +764,7 @@ def prepare_features_for_reading_optionwise_evidence(examples, evidence_logits=N
     labels = []
     qa_list = []
     processed_contexts = []
+    all_example_ids = []
 
     for i in range(len(answers)):
         full_context = contexts[i]
@@ -774,14 +775,7 @@ def prepare_features_for_reading_optionwise_evidence(examples, evidence_logits=N
         for j in range(4):
             labels.append(j)
             example_id = example_ids[i] + '_' + str(j)
-            option = process_text(options[i][j])
-
-            if "_" in question:
-                qa_cat = question.replace("_", option)
-            else:
-                qa_cat = " ".join([question, option])
-            qa_cat = " ".join(whitespace_tokenize(qa_cat)[- data_args.max_qa_length:])
-            qa_list.append(qa_cat)
+            all_example_ids.append(example_id)
 
             per_example_evidence_logits = evidence_logits[example_id]
             per_example_sent_starts = sent_starts[i]
@@ -796,17 +790,33 @@ def prepare_features_for_reading_optionwise_evidence(examples, evidence_logits=N
                 sent_end = per_example_sent_starts[evidence_sent_idx + 1]
                 evidence_concat += full_context[sent_start: sent_end]
 
-            processed_contexts.append(evidence_concat)
+            processed_contexts.append([evidence_concat] * 4)
+
+            qa_pairs = []
+            for k in range(4):
+                option = process_text(options[i][k])
+
+                if "_" in question:
+                    qa_cat = question.replace("_", option)
+                else:
+                    qa_cat = " ".join([question, option])
+                qa_cat = " ".join(whitespace_tokenize(qa_cat)[- data_args.max_qa_length:])
+                qa_pairs.append(qa_cat)
+            qa_list.append(qa_pairs)
+
+    first_sentences = sum(processed_contexts, [])
+    second_sentences = sum(qa_list, [])
 
     tokenized_examples = tokenizer(
-        processed_contexts,
-        qa_list,
+        first_sentences,
+        second_sentences,
         truncation="only_first",
         max_length=data_args.max_seq_length,
         padding="max_length" if data_args.pad_to_max_length else False,
     )
-
+    tokenized_examples = {k: [v[i: i + 4] for i in range(0, len(v), 4)] for k, v in tokenized_examples.items()}
     tokenized_examples['label'] = labels
+    tokenized_examples['example_ids'] = all_example_ids
 
     # Un-flatten
     return tokenized_examples

@@ -1,5 +1,6 @@
 import torch
 import numpy as np
+from typing import Any, Dict, NamedTuple, Optional, Tuple, Union
 
 
 def to_list(tensor):
@@ -14,7 +15,19 @@ def _grad_sync(optimizer):
             # Init optimizer state
             torch.distributed.all_reduce(p.grad)
 
-def compute_mc_metrics(eval_predictions):
+
+class PredictionOutput(NamedTuple):
+    predictions: Union[np.ndarray, Tuple[np.ndarray]]
+    label_ids: Optional[np.ndarray]
+    metrics: Optional[Dict[str, float]]
+    example_ids: Optional[Tuple[str]]
+
+
+def compute_mc_metrics(eval_predictions, mask=None):
     predictions, label_ids = eval_predictions
     preds = np.argmax(predictions, axis=1)
-    return {"accuracy": (preds == label_ids).astype(np.float32).mean().item()}
+    if mask is None:
+        acc = (preds == label_ids).astype(np.float32).mean().item()
+    else:
+        acc = ((preds == label_ids) & np.array(mask)).sum() / np.array(mask).sum()
+    return {"accuracy": acc}

@@ -5,6 +5,7 @@ import timeit
 import collections
 import time
 
+import numpy as np
 from transformers import AdamW, get_linear_schedule_with_warmup
 
 from transformers.data.data_collator import DataCollatorWithPadding, default_data_collator
@@ -21,8 +22,6 @@ from .checkpoint import save_checkpoint
 
 from ..data_utils.collator import DataCollatorForMultipleChoice, DataCollatorForGeneratingEvidenceUsingSelector
 
-
-
 from utils.param import iter_parameters_of_optimizer
 
 from packaging import version
@@ -33,7 +32,8 @@ from transformers.trainer_pt_utils import (
     nested_detach,
     nested_numpify
 )
-from transformers.trainer_utils import EvalPrediction, denumpify_detensorize, PredictionOutput, speed_metrics, TrainOutput
+from transformers.trainer_utils import EvalPrediction, denumpify_detensorize, speed_metrics, TrainOutput
+from .trainer_utils import PredictionOutput
 from mcmrc.model.evidence_selector import AlbertForEvidenceSelection
 
 _is_native_amp_available = False
@@ -275,8 +275,7 @@ class Trainer:
                                       num_workers=self.args.dataloader_num_workers)
 
         # self.t_total = math.ceil(len(train_dataloader) / self.gradient_accumulation_steps) * self.num_train_epochs # unexpected
-        self.t_total = (
-                                   len(train_dataloader) // self.gradient_accumulation_steps) * self.num_train_epochs  # last of each epoch will be dropped
+        self.t_total = (len(train_dataloader) // self.gradient_accumulation_steps) * self.num_train_epochs  # last of each epoch will be dropped
         self.warmup_steps = int(self.t_total * 0.1)
 
         # Prepare optimizer and schedule (linear warmup and decay)
@@ -448,8 +447,12 @@ class Trainer:
         model = self._wrap_model(self.model)
         model.eval()
 
+        all_example_ids = []
         start_time = timeit.default_timer()
         for step, inputs in enumerate(eval_dataloader):
+            if 'example_ids' in inputs.keys():
+                example_ids = inputs.pop('example_ids')
+                all_example_ids += example_ids
             loss, logits, labels = self.prediction_step(model, inputs, prediction_loss_only)
 
             if loss is not None:
@@ -478,9 +481,8 @@ class Trainer:
         # To be JSON-serializable, we need to remove numpy types or zero-d tensors
         metrics = denumpify_detensorize(metrics)
 
-        evalTime = timeit.default_timer() - start_time
-        logger.info("  Evaluation done in total %f secs (%f sec per example)", evalTime, evalTime / len(dataset))
-
+        eval_time = timeit.default_timer() - start_time
+        logger.info("  Evaluation done in total %f secs (%f sec per example)", eval_time, eval_time / len(dataset))
 
         if eval_loss is not None:
             metrics[f"{metric_key_prefix}_loss"] = eval_loss.mean().item()
@@ -490,7 +492,8 @@ class Trainer:
             if not key.startswith(f"{metric_key_prefix}_"):
                 metrics[f"{metric_key_prefix}_{key}"] = metrics.pop(key)
 
-        return PredictionOutput(predictions=preds, label_ids=label_ids, metrics=metrics)
+        return PredictionOutput(predictions=preds, label_ids=label_ids, metrics=metrics,
+                                example_ids=None if len(all_example_ids) == 0 else all_example_ids)
 
     def evidence_reading(
             self,
@@ -521,6 +524,23 @@ class Trainer:
             compute_metrics=compute_mc_metrics
         )
         self.model = evidence_generator
+
+        answer_dict = {}
+        for orig_example_id, answer in zip(eval_dataset['example_id'], eval_dataset['answer']):
+            answer_dict[orig_example_id] = ord(answer) - ord('A')
+
+        is_answer_option = []
+        for processed_example_id in output.example_ids:
+            orig_example_id = processed_example_id[:-2]
+            corresponding_option = int(processed_example_id[-1])
+            is_answer_option.append(int(corresponding_option == answer_dict[orig_example_id]))
+        right_option_acc = compute_mc_metrics(EvalPrediction(predictions=output.predictions, label_ids=output.label_ids),
+                                              is_answer_option)
+        wrong_option_acc = compute_mc_metrics(EvalPrediction(predictions=output.predictions, label_ids=output.label_ids),
+                                              1 - np.array(is_answer_option))
+        output.metrics.update({f'{metric_key_prefix}_right_acc': right_option_acc['accuracy'],
+                               f'{metric_key_prefix}_wrong_acc': wrong_option_acc['accuracy']})
+
 
         n_samples = len(processed_datasets)
         output.metrics.update(speed_metrics(metric_key_prefix, start_time, n_samples))

@@ -184,15 +184,9 @@ def main():
     )
     pprepare_features_for_generating_optionwise_evidence = partial(prepare_features_for_generating_optionwise_evidence,
                                                                    tokenizer=tokenizer, data_args=data_args)
-    evidence_generating_datasets = {k: datasets[k].map(
-        pprepare_features_for_generating_optionwise_evidence,
-        batched=True,
-        num_proc=data_args.preprocessing_num_workers,
-        remove_columns=column_names,
-        load_from_cache_file=not data_args.overwrite_cache,
-    ) for k in datasets.keys() if k != "train"}
 
-    pprepare_features_for_reading_optionwise_evidence = partial(prepare_features_for_reading_optionwise_evidence, data_args=data_args)
+    pprepare_features_for_reading_optionwise_evidence = partial(prepare_features_for_reading_optionwise_evidence,
+                                                                tokenizer=tokenizer, data_args=data_args)
 
     # Data collator
     data_collator = DataCollatorForInitializingEvidenceSelector(tokenizer=tokenizer)
@@ -238,8 +232,8 @@ def main():
         results = trainer.evaluate(initializing_evidence_selector_datasets["validation"]).metrics
         fulleval_results = trainer.evaluate_with_explicit_reader(evidence_reader=evidence_reader,
                                                                  eval_dataset=datasets["validation"],
-                                                                 feature_func_for_evidence_generating=pprepare_features_for_reading_optionwise_evidence,
-                                                                 feature_func_for_evidence_reading=pprepare_features_for_generating_optionwise_evidence
+                                                                 feature_func_for_evidence_reading=pprepare_features_for_reading_optionwise_evidence,
+                                                                 feature_func_for_evidence_generating=pprepare_features_for_generating_optionwise_evidence
                                                                  )
 
         metrics = {**results, **fulleval_results}
@@ -255,8 +249,8 @@ def main():
         results = trainer.evaluate(initializing_evidence_selector_datasets["test"]).metrics
         fulleval_results = trainer.evaluate_with_explicit_reader(evidence_reader=evidence_reader,
                                                                  eval_dataset=datasets["test"],
-                                                                 feature_func_for_evidence_generating=pprepare_features_for_reading_optionwise_evidence,
-                                                                 feature_func_for_evidence_reading=pprepare_features_for_generating_optionwise_evidence
+                                                                 feature_func_for_evidence_reading=pprepare_features_for_reading_optionwise_evidence,
+                                                                 feature_func_for_evidence_generating=pprepare_features_for_generating_optionwise_evidence
                                                                  )
 
         metrics = {**results, **fulleval_results}
