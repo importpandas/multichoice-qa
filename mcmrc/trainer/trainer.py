@@ -547,46 +547,9 @@ class Trainer:
 
         return output.metrics
 
-    def evaluate_with_explicit_reader(
-            self,
-            evidence_reader,
-            eval_dataset,
-            feature_func_for_evidence_generating,
-            feature_func_for_evidence_reading,
-            evidence_generating_data_collator=None,
-            ignore_keys: Optional[List[str]] = None,
-    ) -> Dict[str, float]:
-        """
-        Run evaluation and returns metrics.
-
-        The calling script will be responsible for providing a method to compute metrics, as they are task-dependent
-        (pass it to the init :obj:`compute_metrics` argument).
-
-        You can also subclass and override this method to inject custom behavior.
-
-        Args:
-            eval_dataset (:obj:`Dataset`, `optional`):
-                Pass a dataset if you wish to override :obj:`self.eval_dataset`. If it is an :obj:`datasets.Dataset`,
-                columns not accepted by the ``model.forward()`` method are automatically removed. It must implement the
-                :param feature_func_for_evidence_generating:
-                :param feature_func_for_evidence_reading:
-                :param evidence_generating_data_collator:
-                :param ignore_keys:
-                :param eval_dataset:
-                :param evidence_reader:
-                :obj:`__len__` method.
-            ignore_keys (:obj:`Lst[str]`, `optional`):
-                A list of keys in the output of your model (if it is a dictionary) that should be ignored when
-                gathering predictions.
-            metric_key_prefix (:obj:`str`, `optional`, defaults to :obj:`"eval"`):
-                An optional prefix to be used as the metrics key prefix. For example the metrics "bleu" will be named
-                "eval_bleu" if the prefix is "eval" (default)
-
-        Returns:
-            A dictionary containing the evaluation loss and the potential metrics computed from the predictions. The
-            dictionary also contains the epoch number which comes from the training state.
-        """
-        # memory metrics - must set up as early as possible
+    def evidence_generating(self,
+                            eval_dataset,
+                            feature_func_for_evidence_generating):
         evidence_generating_data_collator = DataCollatorForGeneratingEvidenceUsingSelector(tokenizer=self.tokenizer)
 
         evidence_generating_dataset = eval_dataset.map(
@@ -602,6 +565,7 @@ class Trainer:
             raise ValueError("eval_dataset must implement __len__")
 
         evidence_selector = self._wrap_model(self.model)
+        evidence_selector.eval()
 
         eval_sampler = SequentialSampler(evidence_generating_dataset)
 
@@ -642,6 +606,50 @@ class Trainer:
                     for idx in sent_idx:
                         if idx != -1:
                             evidence_logits[example_id][idx] = probs[i][idx].item()
+        return evidence_logits
+
+    def evaluate_with_explicit_reader(
+            self,
+            evidence_reader,
+            eval_dataset,
+            feature_func_for_evidence_generating,
+            feature_func_for_evidence_reading,
+            evidence_generating_data_collator=None,
+            ignore_keys: Optional[List[str]] = None,
+    ) -> Dict[str, float]:
+        """
+        Run evaluation and returns metrics.
+
+        The calling script will be responsible for providing a method to compute metrics, as they are task-dependent
+        (pass it to the init :obj:`compute_metrics` argument).
+
+        You can also subclass and override this method to inject custom behavior.
+
+        Args:
+            eval_dataset (:obj:`Dataset`, `optional`):
+                Pass a dataset if you wish to override :obj:`self.eval_dataset`. If it is an :obj:`datasets.Dataset`,
+                columns not accepted by the ``model.forward()`` method are automatically removed. It must implement the
+                :param feature_func_for_evidence_generating:
+                :param feature_func_for_evidence_reading:
+                :param evidence_generating_data_collator:
+                :param ignore_keys:
+                :param eval_dataset:
+                :param evidence_reader:
+                :obj:`__len__` method.
+            ignore_keys (:obj:`Lst[str]`, `optional`):
+                A list of keys in the output of your model (if it is a dictionary) that should be ignored when
+                gathering predictions.
+            metric_key_prefix (:obj:`str`, `optional`, defaults to :obj:`"eval"`):
+                An optional prefix to be used as the metrics key prefix. For example the metrics "bleu" will be named
+                "eval_bleu" if the prefix is "eval" (default)
+
+        Returns:
+            A dictionary containing the evaluation loss and the potential metrics computed from the predictions. The
+            dictionary also contains the epoch number which comes from the training state.
+        """
+        # memory metrics - must set up as early as possible
+
+        evidence_logits = self.evidence_generating(eval_dataset, feature_func_for_evidence_generating)
 
         metrics = {}
         for evidence_len in [1, 2, 3, 4]:

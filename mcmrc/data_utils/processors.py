@@ -820,3 +820,64 @@ def prepare_features_for_reading_optionwise_evidence(examples, evidence_logits=N
 
     # Un-flatten
     return tokenized_examples
+
+def prepare_features_for_intensive_evidence_selector(examples, evidence_logits=None, evidence_len=2, tokenizer=None, data_args=None):
+    contexts = examples['article']
+    answers = examples['answer']
+    options = examples['options']
+    questions = examples['question']
+    example_ids = examples['example_id']
+    sent_starts = examples['article_sent_start']
+
+    labels = []
+    question_list = []
+    processed_contexts = []
+    #all_example_ids = []
+
+    for i in range(len(answers)):
+        full_context = contexts[i]
+
+        label = ord(answers[i]) - ord("A")
+        labels.append(label)
+
+        question = process_text(questions[i])
+        context_list = []
+        #all_example_ids.append(example_ids[i])
+        for j in range(4):
+            optionwise_example_id = example_ids[i] + '_' + str(j)
+
+
+            per_example_evidence_logits = evidence_logits[optionwise_example_id]
+            per_example_sent_starts = sent_starts[i]
+            per_example_sent_starts.append(len(full_context))
+
+            evidence_len = evidence_len if evidence_len <= len(evidence_logits[optionwise_example_id]) else len(evidence_logits[optionwise_example_id])
+            per_example_evidence_sent_idxs = sorted(per_example_evidence_logits.keys(),
+                                                    key=lambda x: per_example_evidence_logits[x], reverse=True)[: evidence_len]
+            evidence_concat = ""
+            for evidence_sent_idx in sorted(per_example_evidence_sent_idxs):
+                sent_start = per_example_sent_starts[evidence_sent_idx]
+                sent_end = per_example_sent_starts[evidence_sent_idx + 1]
+                evidence_concat += full_context[sent_start: sent_end]
+
+            context_list.append(evidence_concat)
+
+        processed_contexts.append(context_list)
+        question_list.append([question] * 4)
+
+    first_sentences = sum(processed_contexts, [])
+    second_sentences = sum(question_list, [])
+
+    tokenized_examples = tokenizer(
+        first_sentences,
+        second_sentences,
+        truncation="only_first",
+        max_length=data_args.max_seq_length,
+        padding="max_length" if data_args.pad_to_max_length else False,
+    )
+    tokenized_examples = {k: [v[i: i + 4] for i in range(0, len(v), 4)] for k, v in tokenized_examples.items()}
+    tokenized_examples['label'] = labels
+    #tokenized_examples['example_ids'] = all_example_ids
+
+    # Un-flatten
+    return tokenized_examples

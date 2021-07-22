@@ -22,7 +22,7 @@ import sys
 import logging
 from pathlib import Path
 import numpy as np
-from datasets import load_dataset
+from datasets import load_dataset, ReadInstruction
 from functools import partial
 
 from transformers import (
@@ -73,13 +73,18 @@ class DataTrainingArguments(BasicDataTrainingArguments):
         },
     )
 
+@dataclass
+class AllTrainingArguments(TrainingArguments):
+    train_intensive_evidence_selector: bool = field(default=False, metadata={"help": "Whether to run training."})
+
+
 
 def main():
     # See all possible arguments in src/transformers/training_args.py
     # or by passing the --help flag to this script.
     # We now keep distinct sets of args, for a cleaner separation of concerns.
 
-    parser = HfArgumentParser((ModelArguments, DataTrainingArguments, TrainingArguments))
+    parser = HfArgumentParser((ModelArguments, DataTrainingArguments, AllTrainingArguments))
     if len(sys.argv) == 2 and sys.argv[1].endswith(".json"):
         # If we pass only one argument to the script and it's the path to a json file,
         # let's parse it to get our arguments.
@@ -123,7 +128,8 @@ def main():
     else:
         if data_args.dataset == 'race':
             from mcmrc.data_utils.processors import prepare_features_for_initializing_extensive_evidence_selector, \
-                prepare_features_for_generating_optionwise_evidence, prepare_features_for_reading_optionwise_evidence
+                prepare_features_for_generating_optionwise_evidence, prepare_features_for_reading_optionwise_evidence, \
+                prepare_features_for_intensive_evidence_selector
         if data_args.dataset == 'dream':
             pass
 
@@ -136,6 +142,12 @@ def main():
     data_files['validation'] = data_args.validation_file if data_args.validation_file is not None else None
     data_files['test'] = data_args.test_file if data_args.test_file is not None else None
 
+    # datasets = load_dataset(data_args.dataload_script, data_args.dataload_split,
+    #                         data_files=data_files if data_files['train'] is not None else None,
+    #                         data_dir=data_args.data_dir,
+    #                         split={'train': ReadInstruction('train', from_=0, to=5, unit='abs'),
+    #                                'validation': ReadInstruction('validation', from_=0, to=5, unit='abs'),
+    #                                'test': ReadInstruction('test', from_=0, to=5, unit='abs')})
     datasets = load_dataset(data_args.dataload_script, data_args.dataload_split,
                             data_files=data_files if data_files['train'] is not None else None,
                             data_dir=data_args.data_dir)
@@ -154,7 +166,13 @@ def main():
         cache_dir=model_args.cache_dir,
         use_fast=model_args.use_fast_tokenizer,
     )
-    evidence_selector = AutoModelForSequenceClassification.from_pretrained(
+    extensive_evidence_selector = AutoModelForSequenceClassification.from_pretrained(
+        model_args.model_name_or_path,
+        from_tf=bool(".ckpt" in model_args.model_name_or_path),
+        config=config,
+        cache_dir=model_args.cache_dir,
+    )
+    intensive_evidence_selector = AutoModelForMultipleChoice.from_pretrained(
         model_args.model_name_or_path,
         from_tf=bool(".ckpt" in model_args.model_name_or_path),
         config=config,
@@ -198,8 +216,8 @@ def main():
         return {"accuracy": (preds == label_ids).astype(np.float32).mean().item()}
 
     # Initialize our Trainer
-    trainer = Trainer(
-        model=evidence_selector,
+    extensive_trainer = Trainer(
+        model=extensive_evidence_selector,
         args=training_args,
         train_dataset=initializing_evidence_selector_datasets["train"] if training_args.do_train else None,
         eval_dataset=initializing_evidence_selector_datasets["validation"] if training_args.do_eval else None,
@@ -209,14 +227,45 @@ def main():
     )
 
     if training_args.do_train:
-        train_result = trainer.train()
+        train_result = extensive_trainer.train()
 
         output_train_file = os.path.join(training_args.output_dir, "train_results.txt")
         with open(output_train_file, "w") as writer:
-            logger.info("***** Train results *****")
+            logger.info("***** Extensive Train results *****")
             for key, value in sorted(train_result.metrics.items()):
                 logger.info(f"  {key} = {value}")
                 writer.write(f"{key} = {value}\n")
+
+    if training_args.train_intensive_evidence_selector:
+        evidence_logits = {k: extensive_trainer.evidence_generating(v, pprepare_features_for_generating_optionwise_evidence) for k, v in datasets.items()}
+        pprepare_features_for_intensive_evidence_selector = partial(prepare_features_for_intensive_evidence_selector,
+                                                                    tokenizer=tokenizer, data_args=data_args)
+        train_intensive_evidence_selector_datasets = {k: datasets[k].map(
+            partial(pprepare_features_for_intensive_evidence_selector, evidence_logits=evidence_logits[k]),
+            batched=True,
+            num_proc=data_args.preprocessing_num_workers,
+            remove_columns=column_names,
+            load_from_cache_file=not data_args.overwrite_cache,
+        ) for k in datasets.keys()}
+        intensive_trainer = Trainer(
+            model=intensive_evidence_selector,
+            args=training_args,
+            train_dataset=train_intensive_evidence_selector_datasets["train"],
+            eval_dataset=train_intensive_evidence_selector_datasets ["validation"],
+            tokenizer=tokenizer,
+            data_collator=DataCollatorForMultipleChoice(tokenizer=tokenizer),
+            compute_metrics=compute_metrics,
+        )
+
+        train_result = intensive_trainer.train()
+
+        output_train_file = os.path.join(training_args.output_dir, "train_results.txt")
+        with open(output_train_file, "a+") as writer:
+            logger.info("***** Intensive Train results *****")
+            for key, value in sorted(train_result.metrics.items()):
+                logger.info(f"  {key} = {value}")
+                writer.write(f"{key} = {value}\n")
+
 
     # Evaluation
     # To use the best checkpoint model at end, use the aruguments
@@ -229,12 +278,11 @@ def main():
 
     if eval_on_dev:
         logger.info("*** Evaluate ***")
-        results = trainer.evaluate(initializing_evidence_selector_datasets["validation"]).metrics
-        fulleval_results = trainer.evaluate_with_explicit_reader(evidence_reader=evidence_reader,
-                                                                 eval_dataset=datasets["validation"],
-                                                                 feature_func_for_evidence_reading=pprepare_features_for_reading_optionwise_evidence,
-                                                                 feature_func_for_evidence_generating=pprepare_features_for_generating_optionwise_evidence
-                                                                 )
+        results = extensive_trainer.evaluate(initializing_evidence_selector_datasets["validation"]).metrics
+        fulleval_results = extensive_trainer.evaluate_with_explicit_reader(evidence_reader=evidence_reader,
+                                                                           eval_dataset=datasets["validation"],
+                                                                           feature_func_for_evidence_reading=pprepare_features_for_reading_optionwise_evidence,
+                                                                           feature_func_for_evidence_generating=pprepare_features_for_generating_optionwise_evidence)
 
         metrics = {**results, **fulleval_results}
         output_eval_file = os.path.join(training_args.output_dir, "eval_results.txt")
@@ -246,12 +294,11 @@ def main():
     if eval_on_test:
         logger.info("*** Test ***")
 
-        results = trainer.evaluate(initializing_evidence_selector_datasets["test"]).metrics
-        fulleval_results = trainer.evaluate_with_explicit_reader(evidence_reader=evidence_reader,
-                                                                 eval_dataset=datasets["test"],
-                                                                 feature_func_for_evidence_reading=pprepare_features_for_reading_optionwise_evidence,
-                                                                 feature_func_for_evidence_generating=pprepare_features_for_generating_optionwise_evidence
-                                                                 )
+        results = extensive_trainer.evaluate(initializing_evidence_selector_datasets["test"]).metrics
+        fulleval_results = extensive_trainer.evaluate_with_explicit_reader(evidence_reader=evidence_reader,
+                                                                           eval_dataset=datasets["test"],
+                                                                           feature_func_for_evidence_reading=pprepare_features_for_reading_optionwise_evidence,
+                                                                           feature_func_for_evidence_generating=pprepare_features_for_generating_optionwise_evidence)
 
         metrics = {**results, **fulleval_results}
         output_test_file = os.path.join(training_args.output_dir, "test_results.txt")
