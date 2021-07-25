@@ -555,7 +555,7 @@ class Trainer:
         evidence_generating_dataset = eval_dataset.map(
             feature_func_for_evidence_generating,
             batched=True,
-            num_proc=4,
+            num_proc=1,
             remove_columns=eval_dataset.column_names,
             load_from_cache_file=False,
         )
@@ -608,7 +608,7 @@ class Trainer:
                             evidence_logits[example_id][idx] = probs[i][idx].item()
         return evidence_logits
 
-    def evaluate_with_explicit_reader(
+    def evaluate_evidence_with_explicit_reader(
             self,
             evidence_reader,
             eval_dataset,
@@ -660,3 +660,55 @@ class Trainer:
         return metrics
         # return output.metrics
 
+    def evaluate_intensive_selector_with_explicit_reader(
+            self,
+            evidence_reader,
+            multiple_choice_dataset,
+            intensive_selector_dataset,
+            metric_key_prefix="fulleval"
+    ):
+
+        evidence_reader = evidence_reader.to(self.args.device)
+        _model = self.model
+        self.model = evidence_reader
+        evidence_reader_output = self.evaluate(
+            multiple_choice_dataset,
+            description="Evaluation",
+            metric_key_prefix="evidence_reader",
+            compute_metrics=compute_mc_metrics)
+        self.model = _model
+
+        intensive_selector_output = self.evaluate(
+            intensive_selector_dataset,
+            description="Evaluation",
+            metric_key_prefix="intensive_selector",
+            compute_metrics=compute_mc_metrics)
+
+        evidence_reader_predictions = {}
+        intensive_selector_predictions = {}
+        labels = {}
+        for prediction, label_id, example_id in zip(*evidence_reader_output[:-1]):
+            evidence_reader_predictions[example_id] = torch.softmax(torch.tensor(prediction), -1)
+            labels[example_id] = label_id
+
+        for prediction, label_id, example_id in zip(*intensive_selector_output[:-1]):
+            intensive_selector_predictions[example_id] = torch.softmax(torch.tensor(prediction), -1)
+            assert labels[example_id] == label_id
+
+
+        merge_ratio = [0.01, 0.03, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5]
+        merge_prediction = {k: [] for k in merge_ratio}
+        label_list = []
+        for example_id, label_id, in labels.items():
+            label_list.append(label_id)
+            intensive_selector_prediction = intensive_selector_predictions[example_id]
+            evidence_reader_prediction = evidence_reader_predictions[example_id]
+            for ratio in merge_ratio:
+                merge_prediction[ratio].append((ratio * intensive_selector_prediction + (1 - ratio) * evidence_reader_prediction).tolist())
+
+        merged_acc = {f"merge_{ratio}_acc": compute_mc_metrics(EvalPrediction(predictions=merge_prediction[ratio], label_ids=label_list))['accuracy']
+                      for ratio in merge_ratio}
+
+        metrics = {**evidence_reader_output.metrics, **intensive_selector_output.metrics}
+        metrics = {**metrics, **merged_acc}
+        return metrics

@@ -19,8 +19,8 @@ def _grad_sync(optimizer):
 class PredictionOutput(NamedTuple):
     predictions: Union[np.ndarray, Tuple[np.ndarray]]
     label_ids: Optional[np.ndarray]
-    metrics: Optional[Dict[str, float]]
     example_ids: Optional[Tuple[str]]
+    metrics: Optional[Dict[str, float]]
 
 
 def compute_mc_metrics(eval_predictions, mask=None):

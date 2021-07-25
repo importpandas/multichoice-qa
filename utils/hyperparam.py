@@ -25,6 +25,26 @@ def hyperparam_path_for_initializing_evidence_selector(model_args, data_args, tr
         os.makedirs(exp_path)
     return exp_path
 
+def hyperparam_path_for_two_stage_evidence_selector(model_args, data_args, training_args):
+    dataset_name = f'dataset_{data_args.dataset}'
+    model_type = f'model_{model_args.model_name_or_path.split("/")[-1]}'
+    now_time = time.strftime("%Y_%m_%d_%H:%M:%S", time.localtime())
+    exp_name = hyperparam_base(model_args, data_args, training_args)
+    exp_name += f'__max_evi_seq_len_{data_args.max_evidence_seq_length}'
+    exp_name += f'__max_seq_len_{data_args.max_seq_length}'
+    exp_name += f'__evidence_len_{data_args.evidence_len}'
+    if training_args.train_extensive_evidence_selector:
+        exp_name += f'__evi_sam_num_{data_args.evidence_sampling_num}'
+    exp_name += f'__train_iselector_with_option_{data_args.train_intensive_selector_with_option}'
+    exp_name += f'__train_iselector_with_non_overlap_evidence_{data_args.train_intensive_selector_with_non_overlapping_evidence}'
+    exp_name += f'__pseudo_path_{data_args.pseudo_label_path.split("/")[-1].replace(".pt", "")}'
+
+    exp_path = os.path.join(training_args.output_dir, dataset_name, model_type, exp_name, now_time)
+
+    if not os.path.exists(exp_path):
+        os.makedirs(exp_path)
+    return exp_path
+
 
 def hyperparam_path_for_baseline(model_args, data_args, training_args):
     dataset_name = f'dataset_{data_args.dataset}'

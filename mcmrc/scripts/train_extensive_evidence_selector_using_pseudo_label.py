@@ -35,7 +35,7 @@ from transformers import (
     set_seed,
 )
 
-from utils.hyperparam import hyperparam_path_for_initializing_evidence_selector
+from utils.hyperparam import hyperparam_path_for_two_stage_evidence_selector
 from utils.initialization import setup_root_logger
 from utils.utils_distributed_training import is_main_process
 
@@ -74,17 +74,53 @@ class DataTrainingArguments(BasicDataTrainingArguments):
         default="",
         metadata={"help": "Path to pseudo evidence label"}
     )
+    max_evidence_seq_length: int = field(
+        default=200,
+        metadata={
+            "help": "The maximum total input sequence length after tokenization. If passed, sequences longer "
+                    "than this will be truncated, sequences shorter will be padded."
+        },
+    )
+    evidence_sampling_num: int = field(
+        default=2,
+        metadata={
+            "help": "number of sentences of each evidence"
+        },
+    )
     evidence_len: int = field(
         default=2,
         metadata={
             "help": "number of sentences of each evidence"
         },
     )
+    train_intensive_selector_with_option: bool = field(
+        default=False,
+        metadata={
+            "help": "Whether to train intensive selector with question-option pair"
+        },
+    )
+    train_intensive_selector_with_non_overlapping_evidence: bool = field(
+        default=False,
+        metadata={
+            "help": "Whether to train intensive selector with non overlapping evidence"
+        },
+    )
 
 
 @dataclass
 class AllTrainingArguments(TrainingArguments):
-    train_intensive_evidence_selector: bool = field(default=False, metadata={"help": "Whether to run training."})
+    train_extensive_evidence_selector: bool = field(
+        default=False,
+        metadata={"help": "Whether to train extensive evidence reader."})
+    train_intensive_evidence_selector: bool = field(
+        default=False,
+        metadata={"help": "Whether to train intensive evidence reader."})
+    eval_extensive_evidence_selector: bool = field(
+        default=False,
+        metadata={"help": "Whether to evaluate extensive evidence reader."})
+    eval_intensive_evidence_selector: bool = field(
+        default=False,
+        metadata={"help": "Whether to evaluate intensive evidence reader."})
 
 
 def main():
@@ -100,12 +136,12 @@ def main():
     else:
         model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
-    checkpoint_dir = hyperparam_path_for_initializing_evidence_selector(model_args, data_args, training_args)
+    checkpoint_dir = hyperparam_path_for_two_stage_evidence_selector(model_args, data_args, training_args)
     ckpt_dir = Path(checkpoint_dir)
     postfix = ""
-    if training_args.do_train:
+    if training_args.train_extensive_evidence_selector or training_args.train_intensive_evidence_selector:
         postfix += "_train"
-    elif training_args.do_eval:
+    else:
         postfix += "_eval"
     setup_root_logger(ckpt_dir, training_args.local_rank, debug=False, postfix=postfix)
 
@@ -137,7 +173,8 @@ def main():
         if data_args.dataset == 'race':
             from mcmrc.data_utils.processors import prepare_features_for_initializing_extensive_evidence_selector, \
                 prepare_features_for_generating_optionwise_evidence, prepare_features_for_reading_optionwise_evidence, \
-                prepare_features_for_intensive_evidence_selector
+                prepare_features_for_intensive_evidence_selector, \
+                prepare_features
         if data_args.dataset == 'dream':
             pass
 
@@ -208,25 +245,29 @@ def main():
         cache_dir=model_args.cache_dir,
     )
 
-    if training_args.do_train:
+    if training_args.train_extensive_evidence_selector:
         column_names = datasets["train"].column_names
     else:
         column_names = datasets["validation"].column_names
+
     pprepare_features_for_initializing_evidence_selector = partial(
-        prepare_features_for_initializing_extensive_evidence_selector, evidence_len=data_args.evidence_len,
+        prepare_features_for_initializing_extensive_evidence_selector, evidence_len=data_args.evidence_sampling_num,
         tokenizer=tokenizer, data_args=data_args, pseudo_label_path=data_args.pseudo_label_path)
-    initializing_evidence_selector_datasets = datasets.map(
-        pprepare_features_for_initializing_evidence_selector,
-        batched=True,
-        num_proc=data_args.preprocessing_num_workers,
-        remove_columns=column_names,
-        load_from_cache_file=not data_args.overwrite_cache,
-    )
+
     pprepare_features_for_generating_optionwise_evidence = partial(prepare_features_for_generating_optionwise_evidence,
                                                                    tokenizer=tokenizer, data_args=data_args)
 
     pprepare_features_for_reading_optionwise_evidence = partial(prepare_features_for_reading_optionwise_evidence,
                                                                 tokenizer=tokenizer, data_args=data_args)
+
+    pprepare_features_for_intensive_evidence_selector = \
+        partial(prepare_features_for_intensive_evidence_selector,
+                evidence_len=data_args.evidence_len,
+                train_intensive_selector_with_option=data_args.train_intensive_selector_with_option,
+                train_intensive_selector_with_non_overlapping_evidence=data_args.train_intensive_selector_with_non_overlapping_evidence,
+                tokenizer=tokenizer, data_args=data_args)
+
+    pprepare_features_for_multiple_choice = partial(prepare_features, tokenizer=tokenizer, data_args=data_args)
 
     # Data collator
     data_collator = DataCollatorForInitializingEvidenceSelector(tokenizer=tokenizer)
@@ -237,18 +278,36 @@ def main():
         preds = np.argmax(predictions, axis=1)
         return {"accuracy": (preds == label_ids).astype(np.float32).mean().item()}
 
-    # Initialize our Trainer
     extensive_trainer = Trainer(
         model=extensive_evidence_selector,
         args=training_args,
-        train_dataset=initializing_evidence_selector_datasets["train"] if training_args.do_train else None,
-        eval_dataset=initializing_evidence_selector_datasets["validation"] if training_args.do_eval else None,
+        train_dataset=None,
+        eval_dataset=None,
         tokenizer=tokenizer,
         data_collator=data_collator,
         compute_metrics=compute_metrics,
     )
 
-    if training_args.do_train:
+    intensive_trainer = Trainer(
+        model=intensive_evidence_selector,
+        args=training_args,
+        train_dataset=None,
+        eval_dataset=None,
+        tokenizer=tokenizer,
+        data_collator=DataCollatorForMultipleChoice(tokenizer=tokenizer),
+        compute_metrics=compute_metrics,
+    )
+
+    if training_args.train_extensive_evidence_selector:
+        train_extensive_evidence_selector_datasets = datasets.map(
+            pprepare_features_for_initializing_evidence_selector,
+            batched=True,
+            num_proc=data_args.preprocessing_num_workers,
+            remove_columns=column_names,
+            load_from_cache_file=not data_args.overwrite_cache,
+        )
+        extensive_trainer.train_dataset = train_extensive_evidence_selector_datasets["train"]
+        extensive_trainer.eval_dataset = train_extensive_evidence_selector_datasets["validation"]
         train_result = extensive_trainer.train()
 
         output_train_file = os.path.join(training_args.output_dir, "train_results.txt")
@@ -259,26 +318,18 @@ def main():
                 writer.write(f"{key} = {value}\n")
 
     if training_args.train_intensive_evidence_selector:
-        evidence_logits = {
-            k: extensive_trainer.evidence_generating(v, pprepare_features_for_generating_optionwise_evidence) for k, v in datasets.items()}
-        pprepare_features_for_intensive_evidence_selector = partial(prepare_features_for_intensive_evidence_selector,
-                                                                    tokenizer=tokenizer, data_args=data_args)
+        extensive_evidence_logits = {
+            k: extensive_trainer.evidence_generating(v, pprepare_features_for_generating_optionwise_evidence) for k, v
+            in datasets.items()}
         train_intensive_evidence_selector_datasets = {k: datasets[k].map(
-            partial(pprepare_features_for_intensive_evidence_selector, evidence_logits=evidence_logits[k]),
+            partial(pprepare_features_for_intensive_evidence_selector, evidence_logits=extensive_evidence_logits[k]),
             batched=True,
             num_proc=data_args.preprocessing_num_workers,
             remove_columns=column_names,
             load_from_cache_file=not data_args.overwrite_cache,
         ) for k in datasets.keys()}
-        intensive_trainer = Trainer(
-            model=intensive_evidence_selector,
-            args=training_args,
-            train_dataset=train_intensive_evidence_selector_datasets["train"],
-            eval_dataset=train_intensive_evidence_selector_datasets["validation"],
-            tokenizer=tokenizer,
-            data_collator=DataCollatorForMultipleChoice(tokenizer=tokenizer),
-            compute_metrics=compute_metrics,
-        )
+        intensive_trainer.train_dataset = train_intensive_evidence_selector_datasets["train"]
+        intensive_trainer.eval_dataset = train_intensive_evidence_selector_datasets["validation"]
 
         train_result = intensive_trainer.train()
 
@@ -295,40 +346,70 @@ def main():
     # --load_best_model_at_end \
     # --metric_for_best_model accuracy \
     # --evaluation_strategy steps \
-    eval_on_dev = (data_args.eval_dataset == "all" or data_args.eval_dataset == "dev") and training_args.do_eval
-    eval_on_test = (data_args.eval_dataset == "all" or data_args.eval_dataset == "test") and training_args.do_eval
 
-    if eval_on_dev:
-        logger.info("*** Evaluate ***")
-        results = extensive_trainer.evaluate(initializing_evidence_selector_datasets["validation"]).metrics
-        fulleval_results = extensive_trainer.evaluate_with_explicit_reader(evidence_reader=evidence_reader,
-                                                                           eval_dataset=datasets["validation"],
-                                                                           feature_func_for_evidence_reading=pprepare_features_for_reading_optionwise_evidence,
-                                                                           feature_func_for_evidence_generating=pprepare_features_for_generating_optionwise_evidence)
+    if training_args.eval_extensive_evidence_selector:
 
-        metrics = {**results, **fulleval_results}
-        output_eval_file = os.path.join(training_args.output_dir, "eval_results.txt")
-        with open(output_eval_file, "w") as writer:
-            logger.info("***** Eval results *****")
-            for key, value in sorted(metrics.items()):
-                logger.info(f"  {key} = {value}")
-                writer.write(f"{key} = {value}\n")
-    if eval_on_test:
-        logger.info("*** Test ***")
+        if not training_args.train_extensive_evidence_selector:
+            train_extensive_evidence_selector_datasets = {k: datasets[k].map(
+                pprepare_features_for_initializing_evidence_selector,
+                batched=True,
+                num_proc=data_args.preprocessing_num_workers,
+                remove_columns=column_names,
+                load_from_cache_file=not data_args.overwrite_cache,
+            ) for k in datasets.keys() if k != "train"}
 
-        results = extensive_trainer.evaluate(initializing_evidence_selector_datasets["test"]).metrics
-        fulleval_results = extensive_trainer.evaluate_with_explicit_reader(evidence_reader=evidence_reader,
-                                                                           eval_dataset=datasets["test"],
-                                                                           feature_func_for_evidence_reading=pprepare_features_for_reading_optionwise_evidence,
-                                                                           feature_func_for_evidence_generating=pprepare_features_for_generating_optionwise_evidence)
+        for split in ["validation", "test"]:
+            logger.info(f"*** Evaluate {split} set ***")
+            results = extensive_trainer.evaluate(train_extensive_evidence_selector_datasets[split]).metrics
+            fulleval_results = extensive_trainer.evaluate_evidence_with_explicit_reader(
+                evidence_reader=evidence_reader,
+                eval_dataset=datasets[split],
+                feature_func_for_evidence_reading=pprepare_features_for_reading_optionwise_evidence,
+                feature_func_for_evidence_generating=pprepare_features_for_generating_optionwise_evidence)
 
-        metrics = {**results, **fulleval_results}
-        output_test_file = os.path.join(training_args.output_dir, "test_results.txt")
-        with open(output_test_file, "w") as writer:
-            logger.info("***** Test results *****")
-            for key, value in sorted(metrics.items()):
-                logger.info(f"  {key} = {value}")
-                writer.write(f"{key} = {value}\n")
+            metrics = {**results, **fulleval_results}
+            output_eval_file = os.path.join(training_args.output_dir, f"{split}_results.txt")
+            with open(output_eval_file, "a+") as writer:
+                logger.info("***** Extensive Eval results *****")
+                for key, value in sorted(metrics.items()):
+                    logger.info(f"  {key} = {value}")
+                    writer.write(f"{key} = {value}\n")
+
+    if training_args.eval_intensive_evidence_selector:
+
+        if not training_args.train_intensive_evidence_selector:
+            extensive_evidence_logits = {
+                k: extensive_trainer.evidence_generating(v, pprepare_features_for_generating_optionwise_evidence)
+                for k, v in datasets.items() if k != "train"}
+            train_intensive_evidence_selector_datasets = {k: datasets[k].map(
+                partial(pprepare_features_for_intensive_evidence_selector,
+                        evidence_logits=extensive_evidence_logits[k]),
+                batched=True,
+                num_proc=data_args.preprocessing_num_workers,
+                remove_columns=column_names,
+                load_from_cache_file=not data_args.overwrite_cache,
+            ) for k in datasets.keys() if k != "train"}
+
+        multiple_choice_datasets = {k: datasets[k].map(
+            pprepare_features_for_multiple_choice,
+            batched=True,
+            num_proc=data_args.preprocessing_num_workers,
+            remove_columns=column_names,
+            load_from_cache_file=not data_args.overwrite_cache,
+        ) for k in datasets.keys() if k != "train"}
+
+        for split in ["validation", "test"]:
+            logger.info(f"*** Evaluate {split} set ***")
+            metrics = intensive_trainer.evaluate_intensive_selector_with_explicit_reader(
+                evidence_reader=evidence_reader,
+                multiple_choice_dataset=multiple_choice_datasets[split],
+                intensive_selector_dataset=train_intensive_evidence_selector_datasets[split])
+            output_eval_file = os.path.join(training_args.output_dir, f"{split}_results.txt")
+            with open(output_eval_file, "a+") as writer:
+                logger.info("***** Extensive Eval results *****")
+                for key, value in sorted(metrics.items()):
+                    logger.info(f"  {key} = {value}")
+                    writer.write(f"{key} = {value}\n")
 
 
 def _mp_fn(index):
