@@ -51,6 +51,14 @@ class ModelArguments(BasicModelArguments):
     """
     Arguments pertaining to which model/config/tokenizer we are going to fine-tune from.
     """
+    extensive_evidence_selector_path: str = field(
+        default="",
+        metadata={"help": "Path to extensive evidence selector"}
+    )
+    intensive_evidence_selector_path: str = field(
+        default="",
+        metadata={"help": "Path to intensive evidence selector"}
+    )
     evidence_reader_path: str = field(
         default="",
         metadata={"help": "Path to pretrained MRC system 2 for answering questions using evidence"}
@@ -73,10 +81,10 @@ class DataTrainingArguments(BasicDataTrainingArguments):
         },
     )
 
+
 @dataclass
 class AllTrainingArguments(TrainingArguments):
     train_intensive_evidence_selector: bool = field(default=False, metadata={"help": "Whether to run training."})
-
 
 
 def main():
@@ -157,32 +165,46 @@ def main():
     # Distributed training:
     # The .from_pretrained methods guarantee that only one local process can concurrently
     # download model & vocab.
-    config = AutoConfig.from_pretrained(
-        model_args.config_name if model_args.config_name else model_args.model_name_or_path,
-        cache_dir=model_args.cache_dir,
-    )
     tokenizer = AutoTokenizer.from_pretrained(
         model_args.tokenizer_name if model_args.tokenizer_name else model_args.model_name_or_path,
         cache_dir=model_args.cache_dir,
         use_fast=model_args.use_fast_tokenizer,
     )
-    extensive_evidence_selector = AutoModelForSequenceClassification.from_pretrained(
-        model_args.model_name_or_path,
-        from_tf=bool(".ckpt" in model_args.model_name_or_path),
-        config=config,
+    extensive_evidence_selector_path = model_args.extensive_evidence_selector_path \
+        if model_args.extensive_evidence_selector_path else model_args.model_name_or_path
+    intensive_evidence_selector_path = model_args.intensive_evidence_selector_path \
+        if model_args.intensive_evidence_selector_path else model_args.model_name_or_path
+    evidence_reader_path = model_args.evidence_reader_path if model_args.evidence_reader_path else model_args.model_name_or_path
+
+    extensive_selector_config = AutoConfig.from_pretrained(
+        extensive_evidence_selector_path,
         cache_dir=model_args.cache_dir,
     )
-    intensive_evidence_selector = AutoModelForMultipleChoice.from_pretrained(
-        model_args.model_name_or_path,
-        from_tf=bool(".ckpt" in model_args.model_name_or_path),
-        config=config,
+    intensive_selector_config = AutoConfig.from_pretrained(
+        intensive_evidence_selector_path,
+        cache_dir=model_args.cache_dir,
+    )
+    evidence_reader_config = AutoConfig.from_pretrained(
+        evidence_reader_path,
         cache_dir=model_args.cache_dir,
     )
 
-    evidence_reader = AutoModelForMultipleChoice.from_pretrained(
-        model_args.evidence_reader_path,
+    extensive_evidence_selector = AutoModelForSequenceClassification.from_pretrained(
+        extensive_evidence_selector_path,
         from_tf=bool(".ckpt" in model_args.model_name_or_path),
-        config=config,
+        config=extensive_selector_config,
+        cache_dir=model_args.cache_dir,
+    )
+    intensive_evidence_selector = AutoModelForMultipleChoice.from_pretrained(
+        intensive_evidence_selector_path,
+        from_tf=bool(".ckpt" in model_args.model_name_or_path),
+        config=intensive_selector_config,
+        cache_dir=model_args.cache_dir,
+    )
+    evidence_reader = AutoModelForMultipleChoice.from_pretrained(
+        evidence_reader_path,
+        from_tf=bool(".ckpt" in model_args.model_name_or_path),
+        config=evidence_reader_config,
         cache_dir=model_args.cache_dir,
     )
 
@@ -237,7 +259,8 @@ def main():
                 writer.write(f"{key} = {value}\n")
 
     if training_args.train_intensive_evidence_selector:
-        evidence_logits = {k: extensive_trainer.evidence_generating(v, pprepare_features_for_generating_optionwise_evidence) for k, v in datasets.items()}
+        evidence_logits = {
+            k: extensive_trainer.evidence_generating(v, pprepare_features_for_generating_optionwise_evidence) for k, v in datasets.items()}
         pprepare_features_for_intensive_evidence_selector = partial(prepare_features_for_intensive_evidence_selector,
                                                                     tokenizer=tokenizer, data_args=data_args)
         train_intensive_evidence_selector_datasets = {k: datasets[k].map(
@@ -251,7 +274,7 @@ def main():
             model=intensive_evidence_selector,
             args=training_args,
             train_dataset=train_intensive_evidence_selector_datasets["train"],
-            eval_dataset=train_intensive_evidence_selector_datasets ["validation"],
+            eval_dataset=train_intensive_evidence_selector_datasets["validation"],
             tokenizer=tokenizer,
             data_collator=DataCollatorForMultipleChoice(tokenizer=tokenizer),
             compute_metrics=compute_metrics,
@@ -265,7 +288,6 @@ def main():
             for key, value in sorted(train_result.metrics.items()):
                 logger.info(f"  {key} = {value}")
                 writer.write(f"{key} = {value}\n")
-
 
     # Evaluation
     # To use the best checkpoint model at end, use the aruguments
