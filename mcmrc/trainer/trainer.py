@@ -17,7 +17,7 @@ from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 from torch.utils.data.distributed import DistributedSampler
 
 from .common import Timer
-from .trainer_utils import compute_mc_metrics
+from .trainer_utils import compute_mc_metrics, compute_verifier_metrics
 from .checkpoint import save_checkpoint
 
 from ..data_utils.collator import DataCollatorForMultipleChoice, DataCollatorForGeneratingEvidenceUsingSelector
@@ -41,6 +41,40 @@ if version.parse(torch.__version__) >= version.parse("1.6"):
     _is_native_amp_available = True
 
 logger = logging.getLogger(__name__)
+
+
+def evaluate_verifier_with_reader_and_iselector(
+        reader_logits,
+        selector_logits,
+        verifier_logits,
+        label_dict,
+        threshold=None
+):
+
+    merge_ratio = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5]
+    merge_prediction = {k: {} for k in merge_ratio}
+    verifier_probs = {}
+    for example_id, label_id, in label_dict.items():
+        verifier_probs[example_id] = torch.softmax(torch.tensor(verifier_logits[example_id]), -1)[1].item()
+        selector_prob = torch.softmax(torch.tensor(selector_logits[example_id]), -1)
+        reader_prob = torch.softmax(torch.tensor(reader_logits[example_id]), -1)
+        for ratio in merge_ratio:
+            merge_prediction[ratio][example_id] = (ratio * selector_prob + (1 - ratio) * reader_prob).tolist()
+
+    metric_list = []
+    for ratio in merge_ratio:
+        if threshold is not None:
+            per_ratio_threshold = threshold[f"merge_{ratio}" +"_"+ "best_thresh"]
+        else:
+            per_ratio_threshold = -1
+        metrics = {f"merge_{ratio}" +"_"+ k: v for k, v in
+                    compute_verifier_metrics(merge_prediction[ratio], label_dict, verifier_probs, per_ratio_threshold).items()}
+        metric_list.append(metrics)
+
+    merged_metrics = {}
+    for metric in metric_list:
+        merged_metrics.update(metric)
+    return merged_metrics
 
 
 class Trainer:
@@ -431,6 +465,7 @@ class Trainer:
         labels_host: Union[torch.Tensor, List[torch.Tensor]] = None
 
         world_size = max(1, self.args.world_size)
+        compute_metrics = self.compute_metrics if compute_metrics is None else compute_metrics
         prediction_loss_only = True if compute_metrics is None else None
 
         eval_losses_gatherer = DistributedTensorGatherer(world_size, num_examples, make_multiple_of=batch_size)
@@ -608,7 +643,7 @@ class Trainer:
                             evidence_logits[example_id][idx] = probs[i][idx].item()
         return evidence_logits
 
-    def evaluate_evidence_with_explicit_reader(
+    def evaluate_extensive_selector_with_explicit_reader(
             self,
             evidence_reader,
             eval_dataset,
@@ -664,8 +699,7 @@ class Trainer:
             self,
             evidence_reader,
             multiple_choice_dataset,
-            intensive_selector_dataset,
-            metric_key_prefix="fulleval"
+            intensive_selector_dataset
     ):
 
         evidence_reader = evidence_reader.to(self.args.device)
@@ -695,7 +729,6 @@ class Trainer:
             intensive_selector_predictions[example_id] = torch.softmax(torch.tensor(prediction), -1)
             assert labels[example_id] == label_id
 
-
         merge_ratio = [0.01, 0.03, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5]
         merge_prediction = {k: [] for k in merge_ratio}
         label_list = []
@@ -712,3 +745,4 @@ class Trainer:
         metrics = {**evidence_reader_output.metrics, **intensive_selector_output.metrics}
         metrics = {**metrics, **merged_acc}
         return metrics
+

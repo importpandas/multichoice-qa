@@ -1,5 +1,6 @@
 import torch
 import numpy as np
+from sklearn.metrics import f1_score
 from typing import Any, Dict, NamedTuple, Optional, Tuple, Union
 
 
@@ -31,3 +32,46 @@ def compute_mc_metrics(eval_predictions, mask=None):
     else:
         acc = ((preds == label_ids) & np.array(mask)).sum() / np.array(mask).sum()
     return {"accuracy": acc}
+
+
+def compute_classification_metrics(eval_predictions):
+    predictions, label_ids = eval_predictions
+    preds = np.argmax(predictions, axis=1)
+    f1 = f1_score(label_ids, preds)
+    acc = (preds == label_ids).astype(np.float32).mean().item()
+    return {"accuracy": acc, "f1": f1}
+
+
+def compute_verifier_metrics(answer_probs, labels, verifier_probs, threshold=-1):
+    preds_list = []
+    label_list = []
+    for eid in answer_probs.keys():
+        preds_list.append(answer_probs[eid])
+        label_list.append(labels[eid])
+    orig_preds = np.argmax(preds_list, axis=1)
+    num_acc = (orig_preds == np.array(label_list)).astype(np.float32).sum().item()
+    cur_score = num_acc
+    best_score = cur_score
+    best_thresh = 1.0
+    score_with_thresh = cur_score
+    eid_list = sorted(verifier_probs, key=lambda k: verifier_probs[k], reverse=True)
+    for i, eid in enumerate(eid_list):
+        if np.argsort(answer_probs[eid])[-1] == labels[eid]:
+            diff = -1
+        elif np.argsort(answer_probs[eid])[-2] == labels[eid]:
+            diff = 1
+        else:
+            diff = 0
+        cur_score += diff
+        if 0 <= threshold < verifier_probs[eid]:
+            score_with_thresh += diff
+        if cur_score > best_score:
+            best_score = cur_score
+            best_thresh = verifier_probs[eid]
+
+    acc = num_acc / len(label_list)
+    best_acc = best_score / len(label_list)
+    metrics = {'acc': acc, 'best_acc': best_acc, 'best_thresh': best_thresh}
+    if threshold >= 0:
+        metrics[f'acc_with_thresh_{threshold}'] = score_with_thresh
+    return metrics

@@ -207,7 +207,7 @@ def main():
 
 
     # Data collator
-    data_collator = DataCollatorForInitializingEvidenceSelector(tokenizer=tokenizer)
+    data_collator = DataCollatorForSequenceClassification(tokenizer=tokenizer)
 
     # Metric
     def compute_metrics(eval_predictions):

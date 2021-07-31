@@ -824,7 +824,6 @@ def prepare_features_for_reading_optionwise_evidence(examples, evidence_logits=N
         max_length=data_args.max_evidence_seq_length,
         padding="max_length" if data_args.pad_to_max_length else False,
     )
-    tokenized_examples = {k: [v[i: i + 4] for i in range(0, len(v), 4)] for k, v in tokenized_examples.items()}
     tokenized_examples['label'] = labels
     tokenized_examples['example_ids'] = all_example_ids
 
@@ -896,11 +895,12 @@ def prepare_features_for_intensive_evidence_selector(
 
             while sum([len(l) for l in per_example_evidence_sent_idxs]) < max_evidence_num:
                 max_score_idx = torch.argmax(all_sorted_evidence_idxes[:, :, 1])
-                max_score_idx = (max_score_idx // max_evidence_num, max_score_idx % max_evidence_num)
-                max_score_option_idx = max_score_idx[0]
-                max_score_evidence = all_sorted_evidence_idxes[max_score_idx][0]
-                if len(per_example_evidence_sent_idxs[max_score_option_idx]) < 2:
-                    per_example_evidence_sent_idxs[max_score_option_idx].append(int(max_score_evidence.item()))
+                max_score_idx = (max_score_idx // all_sorted_evidence_idxes.size(1),
+                                 max_score_idx % all_sorted_evidence_idxes.size(1))
+                max_score_option_idx = max_score_idx[0].item()
+                max_score_evidence = all_sorted_evidence_idxes[max_score_idx][0].item()
+                if len(per_example_evidence_sent_idxs[max_score_option_idx]) < evidence_len:
+                    per_example_evidence_sent_idxs[max_score_option_idx].append(int(max_score_evidence))
                     all_sorted_evidence_idxes[torch.where(all_sorted_evidence_idxes == max_score_evidence)[:-1] + (1, )] = -1
                 else:
                     all_sorted_evidence_idxes[max_score_idx][1] = -1
@@ -944,6 +944,81 @@ def prepare_features_for_intensive_evidence_selector(
         padding="max_length" if data_args.pad_to_max_length else False,
     )
     tokenized_examples = {k: [v[i: i + 4] for i in range(0, len(v), 4)] for k, v in tokenized_examples.items()}
+    tokenized_examples['label'] = labels
+    tokenized_examples['example_ids'] = example_ids
+
+    # Un-flatten
+    return tokenized_examples
+
+
+def prepare_features_for_training_answer_verifier(
+        examples,
+        answer_logits=None,
+        evidence_logits=None,
+        train_answer_verifier_with_option=False,
+        evidence_len=2,
+        tokenizer=None,
+        data_args=None):
+    contexts = examples['article']
+    answers = examples['answer']
+    options = examples['options']
+    questions = examples['question']
+    example_ids = examples['example_id']
+    sent_starts = examples['article_sent_start']
+
+    labels = []
+    qa_list = []
+    processed_contexts = []
+
+    for i in range(len(answers)):
+        full_context = contexts[i]
+        example_id = example_ids[i]
+
+        prediction = np.argmax(answer_logits[example_id])
+        ground_truth = ord(answers[i]) - ord("A")
+        labels.append(int(prediction != ground_truth))
+
+        question = process_text(questions[i])
+
+        if train_answer_verifier_with_option:
+            option = process_text(options[i][prediction])
+
+            if "_" in question:
+                qa_cat = question.replace("_", option)
+            else:
+                qa_cat = " ".join([question, option])
+            qa_cat = " ".join(whitespace_tokenize(qa_cat)[- data_args.max_qa_length:])
+        else:
+            qa_cat = question
+        qa_list.append(qa_cat)
+
+        per_example_sent_starts = sent_starts[i]
+        per_example_sent_starts.append(len(full_context))
+
+        optionwise_example_id = example_ids[i] + '_' + str(prediction)
+
+        per_example_evidence_logits = evidence_logits[optionwise_example_id]
+
+        evidence_len = evidence_len if evidence_len <= len(evidence_logits[optionwise_example_id]) else len(
+            evidence_logits[optionwise_example_id])
+        per_example_evidence_sent_idxs = sorted(per_example_evidence_logits.keys(),
+                                                key=lambda x: per_example_evidence_logits[x], reverse=True)[
+                                         : evidence_len]
+        evidence_concat = ""
+        for evidence_sent_idx in sorted(per_example_evidence_sent_idxs):
+            sent_start = per_example_sent_starts[evidence_sent_idx]
+            sent_end = per_example_sent_starts[evidence_sent_idx + 1]
+            evidence_concat += full_context[sent_start: sent_end]
+
+        processed_contexts.append(evidence_concat)
+
+    tokenized_examples = tokenizer(
+        processed_contexts,
+        qa_list,
+        truncation="only_first",
+        max_length=data_args.max_evidence_seq_length,
+        padding="max_length" if data_args.pad_to_max_length else False,
+    )
     tokenized_examples['label'] = labels
     tokenized_examples['example_ids'] = example_ids
 

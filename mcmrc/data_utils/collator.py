@@ -132,7 +132,7 @@ class DataCollatorForMultipleChoice:
 
 
 @dataclass
-class DataCollatorForInitializingEvidenceSelector:
+class DataCollatorForSequenceClassification:
     """
     Data collator that will dynamically pad the inputs for multiple choice received.
 
@@ -166,7 +166,10 @@ class DataCollatorForInitializingEvidenceSelector:
     def __call__(self, features):
         label_name = "label" if "label" in features[0].keys() else "labels"
         labels = [feature.pop(label_name) for feature in features]
-
+        if "example_ids" in features[0].keys():
+            example_ids = [feature.pop("example_ids") for feature in features]
+        else:
+            example_ids = None
         batch = self.tokenizer.pad(
             features,
             padding=self.padding,
@@ -176,6 +179,8 @@ class DataCollatorForInitializingEvidenceSelector:
         )
         # Add back labels
         batch["labels"] = torch.tensor(labels, dtype=torch.int64)
+        if example_ids is not None:
+            batch["example_ids"] = example_ids
         return batch
 
 
