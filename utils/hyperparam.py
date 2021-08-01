@@ -33,7 +33,7 @@ def hyperparam_path_for_two_stage_evidence_selector(model_args, data_args, train
     exp_name += f'__max_evi_seq_len_{data_args.max_evidence_seq_length}'
     exp_name += f'__max_seq_len_{data_args.max_seq_length}'
     exp_name += f'__inte_evi_len_{data_args.intensive_evidence_len}'
-    exp_name += f'__veri_evi_len_{data_args.intensive_evidence_len}'
+    exp_name += f'__veri_evi_len_{data_args.verifier_evidence_len}'
     if training_args.train_extensive_evidence_selector:
         exp_name += f'__evi_sam_num_{data_args.evidence_sampling_num}'
     if training_args.train_intensive_evidence_selector:

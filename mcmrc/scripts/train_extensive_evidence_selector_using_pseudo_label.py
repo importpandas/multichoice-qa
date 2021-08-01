@@ -422,6 +422,8 @@ def main():
                          if k != "train" or training_args.train_answer_verifier}
         answer_logits = {k: {example_id: prediction.tolist() for prediction, label_id, example_id in zip(*reader_output[k][: -1])}
                          for k in datasets.keys() if k != "train" or training_args.train_answer_verifier}
+        mc_label_dict = {k: {example_id: label_id for prediction, label_id, example_id in zip(*reader_output[k][: -1])}
+                         for k in datasets.keys() if k != "train" or training_args.train_answer_verifier}
         train_answer_verifier_datasets = {k: datasets[k].map(
             partial(pprepare_features_for_training_answer_verifier, answer_logits=answer_logits[k],
                     evidence_logits=extensive_evidence_logits[k]),
@@ -510,7 +512,6 @@ def main():
             results = verifier_trainer.evaluate(train_answer_verifier_datasets[split])
             verifier_logits = {example_id: prediction.tolist()
                                for prediction, label_id, example_id in zip(*results[: -1])}
-            label_dict = {example_id: label_id for prediction, label_id, example_id in zip(*results[: -1])}
             metrics = results.metrics
 
             if split == 'validation':
@@ -518,19 +519,19 @@ def main():
                     reader_logits=answer_logits[split],
                     selector_logits=selector_logits[split],
                     verifier_logits=verifier_logits,
-                    label_dict=label_dict)
+                    label_dict=mc_label_dict[split])
                 val_verify_thresholds = {k: v for k, v in fulleval_metrics.items() if "thresh" in k}
             else:
                 fulleval_metrics = evaluate_verifier_with_reader_and_iselector(
                     reader_logits=answer_logits[split],
                     selector_logits=selector_logits[split],
                     verifier_logits=verifier_logits,
-                    label_dict=label_dict,
+                    label_dict=mc_label_dict[split],
                     threshold=val_verify_thresholds)
             metrics = {**metrics, **fulleval_metrics}
             output_eval_file = os.path.join(training_args.output_dir, f"{split}_results.txt")
             with open(output_eval_file, "a+") as writer:
-                logger.info("***** Extensive Eval results *****")
+                logger.info("***** Verifier Eval results *****")
                 for key, value in sorted(metrics.items()):
                     logger.info(f"  {key} = {value}")
                     writer.write(f"{key} = {value}\n")
