@@ -956,6 +956,7 @@ def prepare_features_for_training_answer_verifier(
         answer_logits=None,
         evidence_logits=None,
         train_answer_verifier_with_option=False,
+        downsampling=False,
         evidence_len=2,
         tokenizer=None,
         data_args=None):
@@ -976,6 +977,8 @@ def prepare_features_for_training_answer_verifier(
 
         prediction = np.argmax(answer_logits[example_id])
         ground_truth = ord(answers[i]) - ord("A")
+        if downsampling and not int(prediction != ground_truth) and random.random() > 0.5:
+            continue
         labels.append(int(prediction != ground_truth))
 
         question = process_text(questions[i])
@@ -999,8 +1002,7 @@ def prepare_features_for_training_answer_verifier(
 
         per_example_evidence_logits = evidence_logits[optionwise_example_id]
 
-        evidence_len = evidence_len if evidence_len <= len(evidence_logits[optionwise_example_id]) else len(
-            evidence_logits[optionwise_example_id])
+        evidence_len = evidence_len if evidence_len <= len(evidence_logits[optionwise_example_id]) else len(evidence_logits[optionwise_example_id])
         per_example_evidence_sent_idxs = sorted(per_example_evidence_logits.keys(),
                                                 key=lambda x: per_example_evidence_logits[x], reverse=True)[
                                          : evidence_len]

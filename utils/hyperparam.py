@@ -38,10 +38,11 @@ def hyperparam_path_for_two_stage_evidence_selector(model_args, data_args, train
         exp_name += f'__evi_sam_num_{data_args.evidence_sampling_num}'
     if training_args.train_intensive_evidence_selector:
         exp_name += f'__train_ise_with_opt_{data_args.train_intensive_selector_with_option}'
-        exp_name += f'__train_ise_with_no_overlap_evi_{data_args.train_intensive_selector_with_non_overlapping_evidence}'
+        exp_name += f'__ise_with_no_overlap_evi_{data_args.train_intensive_selector_with_non_overlapping_evidence}'
     if training_args.train_answer_verifier:
-        exp_name += f'__train_veri_with_opt_{data_args.train_answer_verifier_with_option}'
-    exp_name += f'__pseudo_path_{data_args.pseudo_label_path.split("/")[-1].replace(".pt", "")}'
+        exp_name += f'__veri_with_opt_{data_args.train_answer_verifier_with_option}'
+    if training_args.train_extensive_evidence_selector:
+        exp_name += f'__pseudo_path_{data_args.pseudo_label_path.split("/")[-1].replace(".pt", "")}'
 
     exp_path = os.path.join(training_args.output_dir, dataset_name, model_type, exp_name, now_time)
 
@@ -55,6 +56,9 @@ def hyperparam_path_for_baseline(model_args, data_args, training_args):
     model_type = f'model_{model_args.model_name_or_path.split("/")[-1]}'
     now_time = time.strftime("%Y_%m_%d_%H:%M:%S", time.localtime())
     exp_name = hyperparam_base(model_args, data_args, training_args)
+    if data_args.split_train_dataset:
+        exp_name += f'__n_fold_{data_args.n_fold}'
+        exp_name += f'__holdout_set_{data_args.holdout_set}'
     exp_path = os.path.join(training_args.output_dir, dataset_name, model_type, exp_name, now_time)
 
     if training_args.do_train and not os.path.exists(exp_path):
@@ -70,5 +74,6 @@ def hyperparam_base(model_args, data_args, training_args):
     exp_name += f'per_device_bs_{training_args.per_device_train_batch_size}__'
     exp_name += f'gradacc_{training_args.gradient_accumulation_steps}__'
     exp_name += f'wr_{training_args.warmup_ratio}__'
-    exp_name += f'epoch_{training_args.num_train_epochs}'
+    exp_name += f'epoch_{training_args.num_train_epochs}__'
+    exp_name += f'seed_{training_args.seed}'
     return exp_name

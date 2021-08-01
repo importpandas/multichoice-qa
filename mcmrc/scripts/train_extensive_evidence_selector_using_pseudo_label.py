@@ -114,6 +114,12 @@ class DataTrainingArguments(BasicDataTrainingArguments):
             "help": "number of sentences of each evidence"
         },
     )
+    train_verifier_with_downsampling: bool = field(
+        default=False,
+        metadata={
+            "help": "Whether to train answer verifier with downsampling"
+        },
+    )
     train_intensive_selector_with_option: bool = field(
         default=False,
         metadata={
@@ -320,6 +326,7 @@ def main():
         prepare_features_for_training_answer_verifier,
         evidence_len=data_args.verifier_evidence_len,
         train_answer_verifier_with_option=data_args.train_answer_verifier_with_option,
+        downsampling=data_args.train_verifier_with_downsampling,
         tokenizer=tokenizer,
         data_args=data_args)
 
@@ -432,6 +439,8 @@ def main():
             remove_columns=column_names,
             load_from_cache_file=not data_args.overwrite_cache,
         ) for k in datasets.keys() if k != "train" or training_args.train_answer_verifier}
+        if training_args.train_answer_verifier:
+            logger.info(f"total {sum(train_answer_verifier_datasets['train']['label'])} positive example for training verifier")
 
     if training_args.train_intensive_evidence_selector:
         intensive_trainer.train_dataset = train_intensive_evidence_selector_datasets["train"]
