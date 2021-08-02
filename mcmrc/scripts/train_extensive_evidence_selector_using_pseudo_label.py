@@ -554,6 +554,12 @@ def main():
                     logger.info(f"  {key} = {value}")
                     writer.write(f"{key} = {value}\n")
 
+            verifier_prediction = {'verifier_logits': verifier_logits, 'reader_logits': answer_logits[split],
+                                   'selector_logits': selector_logits[split]}
+            output_prediction_file = os.path.join(training_args.output_dir, f"{split}_verifier_prediction.json")
+            with open(output_prediction_file, "w") as f:
+                json.dump(verifier_prediction, f)
+
 
 if __name__ == "__main__":
     main()

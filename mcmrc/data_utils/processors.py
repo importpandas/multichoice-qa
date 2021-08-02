@@ -970,10 +970,14 @@ def prepare_features_for_training_answer_verifier(
     labels = []
     qa_list = []
     processed_contexts = []
+    filtered_example_ids = []
 
     for i in range(len(answers)):
         full_context = contexts[i]
         example_id = example_ids[i]
+
+        if example_id not in answer_logits.keys():
+            continue
 
         prediction = np.argmax(answer_logits[example_id])
         ground_truth = ord(answers[i]) - ord("A")
@@ -1013,6 +1017,7 @@ def prepare_features_for_training_answer_verifier(
             evidence_concat += full_context[sent_start: sent_end]
 
         processed_contexts.append(evidence_concat)
+        filtered_example_ids.append(example_id)
 
     tokenized_examples = tokenizer(
         processed_contexts,
@@ -1022,7 +1027,7 @@ def prepare_features_for_training_answer_verifier(
         padding="max_length" if data_args.pad_to_max_length else False,
     )
     tokenized_examples['label'] = labels
-    tokenized_examples['example_ids'] = example_ids
+    tokenized_examples['example_ids'] = filtered_example_ids
 
     # Un-flatten
     return tokenized_examples
