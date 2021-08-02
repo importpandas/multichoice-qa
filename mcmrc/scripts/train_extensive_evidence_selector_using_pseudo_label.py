@@ -16,7 +16,7 @@
 Fine-tuning the library models for multiple choice.
 """
 # You can also adapt this script on your own multiple choice task. Pointers for this are left as comments.
-
+import json
 import os
 import sys
 import logging
@@ -88,6 +88,10 @@ class DataTrainingArguments(BasicDataTrainingArguments):
     pseudo_label_path: str = field(
         default="",
         metadata={"help": "Path to pseudo evidence label"}
+    )
+    answer_logits_path: str = field(
+        default="",
+        metadata={"help": "Path to answer prediction for MRC model trained with cross validation"}
     )
     max_evidence_seq_length: int = field(
         default=200,
@@ -424,13 +428,18 @@ def main():
 
     # prepare features for answer verifier
     if training_args.train_answer_verifier or training_args.eval_answer_verifier:
+        mc_label_dict = {split: {example['example_ids']: example['label'] for example in multiple_choice_datasets[split]}
+                         for split in datasets.keys() if split != "train" or training_args.train_answer_verifier}
+        reader_output = {split: mc_trainer.evaluate(multiple_choice_datasets[split]) for split in datasets.keys()
+                         if split != "train" or training_args.train_answer_verifier}
+        answer_logits = {split: {example_id: prediction.tolist() for prediction, label_id, example_id in zip(*reader_output[split][: -1])}
+                         for split in datasets.keys() if split != "train"}
+        if data_args.answer_logits_path:
+            logger.info(f"loading answer logits from {data_args.answer_logits_path}")
+            with open(data_args.answer_logits_path) as f:
+                trainset_answer_logits = json.load(f)
+            answer_logits['train'] = trainset_answer_logits
 
-        reader_output = {k: mc_trainer.evaluate(multiple_choice_datasets[k]) for k in datasets.keys()
-                         if k != "train" or training_args.train_answer_verifier}
-        answer_logits = {k: {example_id: prediction.tolist() for prediction, label_id, example_id in zip(*reader_output[k][: -1])}
-                         for k in datasets.keys() if k != "train" or training_args.train_answer_verifier}
-        mc_label_dict = {k: {example_id: label_id for prediction, label_id, example_id in zip(*reader_output[k][: -1])}
-                         for k in datasets.keys() if k != "train" or training_args.train_answer_verifier}
         train_answer_verifier_datasets = {k: datasets[k].map(
             partial(pprepare_features_for_training_answer_verifier, answer_logits=answer_logits[k],
                     evidence_logits=extensive_evidence_logits[k]),
