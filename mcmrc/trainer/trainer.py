@@ -77,6 +77,35 @@ def evaluate_verifier_with_reader_and_iselector(
     return merged_metrics
 
 
+def evaluate_mc_style_verifier_with_reader_and_iselector(
+        reader_logits,
+        selector_logits,
+        verifier_logits,
+        label_dict,
+):
+
+    merge_ratio = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5]
+    merge_predictions = {k: {r: [] for r in merge_ratio} for k in merge_ratio}
+    label_list = []
+    for example_id, label_id, in label_dict.items():
+        label_list.append(label_id)
+        verifier_prob = torch.softmax(torch.tensor(verifier_logits[example_id]), -1)
+        selector_prob = torch.softmax(torch.tensor(selector_logits[example_id]), -1)
+        reader_prob = torch.softmax(torch.tensor(reader_logits[example_id]), -1)
+        for merge_selector_ratio in merge_ratio:
+            merge_selector_prediction = (merge_selector_ratio * selector_prob + (1 - merge_selector_ratio) * reader_prob)
+            for merge_verifier_ratio in merge_ratio:
+                merge_verifier_prediction = (merge_verifier_ratio * verifier_prob + (1 - merge_verifier_ratio) * merge_selector_prediction).tolist()
+                merge_predictions[merge_selector_ratio][merge_verifier_ratio].append(merge_verifier_prediction)
+
+    metrics = {}
+    for merge_selector_ratio in merge_ratio:
+        for merge_verifier_ratio in merge_ratio:
+            metrics[f"selector_merge_{merge_selector_ratio}_verifier_merge_{merge_verifier_ratio}_acc"] = \
+                compute_mc_metrics(EvalPrediction(predictions=merge_predictions[merge_selector_ratio][merge_verifier_ratio], label_ids=label_list))['accuracy']
+    return metrics
+
+
 class Trainer:
 
     def __init__(self, args, model, tokenizer, train_dataset, eval_dataset,

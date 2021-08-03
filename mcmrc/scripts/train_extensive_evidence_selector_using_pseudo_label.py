@@ -39,7 +39,7 @@ from utils.hyperparam import hyperparam_path_for_two_stage_evidence_selector
 from utils.initialization import setup_root_logger
 from utils.utils_distributed_training import is_main_process
 
-from ..trainer.trainer import Trainer, evaluate_verifier_with_reader_and_iselector
+from ..trainer.trainer import Trainer, evaluate_verifier_with_reader_and_iselector, evaluate_mc_style_verifier_with_reader_and_iselector
 from ..data_utils.collator import *
 from ..cli.argument import BasicModelArguments, BasicDataTrainingArguments
 from ..trainer.trainer_utils import compute_mc_metrics, compute_classification_metrics, compute_verifier_metrics
@@ -49,6 +49,7 @@ from mcmrc.data_utils.processors import (
     prepare_features_for_generating_optionwise_evidence, prepare_features_for_reading_optionwise_evidence,
     prepare_features_for_intensive_evidence_selector,
     prepare_features_for_training_answer_verifier,
+    prepare_features_for_training_mc_style_answer_verifier,
     prepare_features
 )
 
@@ -76,6 +77,10 @@ class ModelArguments(BasicModelArguments):
     answer_verifier_path: str = field(
         default="",
         metadata={"help": "Path to pretrained MRC system 2 for answering questions using evidence"}
+    )
+    verifier_type: str = field(
+        default="classification",
+        metadata={"help": "'classification' model or 'multi_choice' model"}
     )
 
 
@@ -285,11 +290,18 @@ def main():
         config=evidence_reader_config,
         cache_dir=model_args.cache_dir,
     )
-    answer_verifier = AutoModelForSequenceClassification.from_pretrained(
-        answer_verifier_path,
-        config=answer_verifier_config,
-        cache_dir=model_args.cache_dir,
-    )
+    if model_args.verifier_type == "classification":
+        answer_verifier = AutoModelForSequenceClassification.from_pretrained(
+            answer_verifier_path,
+            config=answer_verifier_config,
+            cache_dir=model_args.cache_dir,
+        )
+    elif model_args.verifier_type == "multi_choice":
+        answer_verifier = AutoModelForMultipleChoice.from_pretrained(
+            answer_verifier_path,
+            config=answer_verifier_config,
+            cache_dir=model_args.cache_dir,
+        )
 
     if training_args.train_extensive_evidence_selector:
         column_names = datasets["train"].column_names
@@ -326,13 +338,20 @@ def main():
         tokenizer=tokenizer,
         data_args=data_args)
 
-    pprepare_features_for_training_answer_verifier = partial(
-        prepare_features_for_training_answer_verifier,
-        evidence_len=data_args.verifier_evidence_len,
-        train_answer_verifier_with_option=data_args.train_answer_verifier_with_option,
-        downsampling=data_args.train_verifier_with_downsampling,
-        tokenizer=tokenizer,
-        data_args=data_args)
+    if model_args.verifier_type == "classification":
+        pprepare_features_for_training_answer_verifier = partial(
+            prepare_features_for_training_answer_verifier,
+            evidence_len=data_args.verifier_evidence_len,
+            train_answer_verifier_with_option=data_args.train_answer_verifier_with_option,
+            downsampling=data_args.train_verifier_with_downsampling,
+            tokenizer=tokenizer,
+            data_args=data_args)
+    elif model_args.verifier_type == "multi_choice":
+        pprepare_features_for_training_answer_verifier = partial(
+            prepare_features_for_training_mc_style_answer_verifier,
+            evidence_len=data_args.verifier_evidence_len,
+            tokenizer=tokenizer,
+            data_args=data_args)
 
     extensive_trainer = Trainer(
         model=extensive_evidence_selector,
@@ -370,8 +389,9 @@ def main():
         train_dataset=None,
         eval_dataset=None,
         tokenizer=tokenizer,
-        data_collator=DataCollatorForSequenceClassification(tokenizer=tokenizer),
-        compute_metrics=compute_classification_metrics,
+        data_collator=DataCollatorForSequenceClassification(tokenizer=tokenizer)
+        if model_args.verifier_type == "classification" else DataCollatorForMultipleChoice(tokenizer=tokenizer),
+        compute_metrics=compute_classification_metrics if model_args.verifier_type == "classification" else compute_mc_metrics,
     )
 
     if training_args.train_answer_verifier or training_args.eval_intensive_evidence_selector or training_args.eval_answer_verifier:
@@ -532,20 +552,28 @@ def main():
                                for prediction, label_id, example_id in zip(*results[: -1])}
             metrics = results.metrics
 
-            if split == 'validation':
-                fulleval_metrics = evaluate_verifier_with_reader_and_iselector(
+            if model_args.verifier_type == "classification":
+                if split == 'validation':
+                    fulleval_metrics = evaluate_verifier_with_reader_and_iselector(
+                        reader_logits=answer_logits[split],
+                        selector_logits=selector_logits[split],
+                        verifier_logits=verifier_logits,
+                        label_dict=mc_label_dict[split])
+                    val_verify_thresholds = {k: v for k, v in fulleval_metrics.items() if "thresh" in k}
+                else:
+                    fulleval_metrics = evaluate_verifier_with_reader_and_iselector(
+                        reader_logits=answer_logits[split],
+                        selector_logits=selector_logits[split],
+                        verifier_logits=verifier_logits,
+                        label_dict=mc_label_dict[split],
+                        threshold=val_verify_thresholds)
+            else:
+                fulleval_metrics = evaluate_mc_style_verifier_with_reader_and_iselector(
                     reader_logits=answer_logits[split],
                     selector_logits=selector_logits[split],
                     verifier_logits=verifier_logits,
                     label_dict=mc_label_dict[split])
-                val_verify_thresholds = {k: v for k, v in fulleval_metrics.items() if "thresh" in k}
-            else:
-                fulleval_metrics = evaluate_verifier_with_reader_and_iselector(
-                    reader_logits=answer_logits[split],
-                    selector_logits=selector_logits[split],
-                    verifier_logits=verifier_logits,
-                    label_dict=mc_label_dict[split],
-                    threshold=val_verify_thresholds)
+
             metrics = {**metrics, **fulleval_metrics}
             output_eval_file = os.path.join(training_args.output_dir, f"{split}_results.txt")
             with open(output_eval_file, "a+") as writer:
