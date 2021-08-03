@@ -25,6 +25,7 @@ def hyperparam_path_for_initializing_evidence_selector(model_args, data_args, tr
         os.makedirs(exp_path)
     return exp_path
 
+
 def hyperparam_path_for_two_stage_evidence_selector(model_args, data_args, training_args):
     dataset_name = f'dataset_{data_args.dataset}'
     model_type = f'model_{model_args.model_name_or_path.split("/")[-1]}'
@@ -41,6 +42,7 @@ def hyperparam_path_for_two_stage_evidence_selector(model_args, data_args, train
         exp_name += f'__ise_with_no_overlap_evi_{data_args.train_intensive_selector_with_non_overlapping_evidence}'
     if training_args.train_answer_verifier:
         exp_name += f'__veri_with_opt_{data_args.train_answer_verifier_with_option}'
+        exp_name += f'__downsampling_{data_args.train_verifier_with_downsampling}'
         exp_name += f'__logits_path_{data_args.answer_logits_path.split("/")[-1].replace(".json", "")}'
     if training_args.train_extensive_evidence_selector:
         exp_name += f'__pseudo_path_{data_args.pseudo_label_path.split("/")[-1].replace(".pt", "")}'
