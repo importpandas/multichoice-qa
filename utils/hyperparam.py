@@ -33,18 +33,22 @@ def hyperparam_path_for_two_stage_evidence_selector(model_args, data_args, train
     exp_name = hyperparam_base(model_args, data_args, training_args)
     exp_name += f'__max_evi_seq_len_{data_args.max_evidence_seq_length}'
     exp_name += f'__max_seq_len_{data_args.max_seq_length}'
-    exp_name += f'__inte_evi_len_{data_args.intensive_evidence_len}'
-    exp_name += f'__veri_evi_len_{data_args.verifier_evidence_len}'
     if training_args.train_extensive_evidence_selector:
         exp_name += f'__evi_sam_num_{data_args.evidence_sampling_num}'
     if training_args.train_intensive_evidence_selector:
+        exp_name += f'__ise_evi_len_{data_args.intensive_evidence_len}'
         exp_name += f'__train_ise_with_opt_{data_args.train_intensive_selector_with_option}'
         exp_name += f'__ise_with_no_overlap_evi_{data_args.train_intensive_selector_with_non_overlapping_evidence}'
     if training_args.train_answer_verifier:
         exp_name += f'__veri_type_{model_args.verifier_type}'
-        exp_name += f'__veri_with_opt_{data_args.train_answer_verifier_with_option}'
-        exp_name += f'__downsampling_{data_args.train_verifier_with_downsampling}'
-        exp_name += f'__logits_path_{data_args.answer_logits_path.split("/")[-1].replace(".json", "")}'
+        exp_name += f'__veri_evi_len_{data_args.verifier_evidence_len}'
+        if model_args.verifier_type == "classification":
+            exp_name += f'__veri_with_opt_{data_args.train_answer_verifier_with_option}'
+            exp_name += f'__downsampling_{data_args.train_verifier_with_downsampling}'
+            exp_name += f'__logits_path_{data_args.answer_logits_path.split("/")[-1].replace(".json", "")}'
+        elif model_args.verifier_type == "multi_choice":
+            exp_name += f'__veri_evi_type_{data_args.verifier_evidence_type}'
+
     if training_args.train_extensive_evidence_selector:
         exp_name += f'__pseudo_path_{data_args.pseudo_label_path.split("/")[-1].replace(".pt", "")}'
 

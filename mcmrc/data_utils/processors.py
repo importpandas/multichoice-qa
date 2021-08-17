@@ -1039,6 +1039,7 @@ def prepare_features_for_training_mc_style_answer_verifier(
         answer_logits=None,
         evidence_logits=None,
         evidence_len=2,
+        is_training=False,
         tokenizer=None,
         data_args=None):
     contexts = examples['article']
@@ -1080,15 +1081,46 @@ def prepare_features_for_training_mc_style_answer_verifier(
         per_example_sent_starts = sent_starts[i]
         per_example_sent_starts.append(len(full_context))
 
-        prediction = np.argmax(answer_logits[example_id])
-        optionwise_example_id = example_ids[i] + '_' + str(prediction)
+        evidence_len = evidence_len if evidence_len <= len(evidence_logits[example_ids[i] + '_' + str(0)]) else len(
+            evidence_logits[example_ids[i] + '_' + str(0)])
+        if data_args.verifier_evidence_type == "prediction":
+            prediction = np.argmax(answer_logits[example_id])
+            optionwise_example_id = example_ids[i] + '_' + str(prediction)
 
-        per_example_evidence_logits = evidence_logits[optionwise_example_id]
+            per_example_evidence_logits = evidence_logits[optionwise_example_id]
 
-        evidence_len = evidence_len if evidence_len <= len(evidence_logits[optionwise_example_id]) else len(evidence_logits[optionwise_example_id])
-        per_example_evidence_sent_idxs = sorted(per_example_evidence_logits.keys(),
-                                                key=lambda x: per_example_evidence_logits[x], reverse=True)[
-                                         : evidence_len]
+            per_example_evidence_sent_idxs = sorted(per_example_evidence_logits.keys(),
+                                                    key=lambda x: per_example_evidence_logits[x], reverse=True)[
+                                             : evidence_len]
+        elif data_args.verifier_evidence_type == "strongest":
+            per_example_evidence_logits = {}
+            for option in range(4):
+                optionwise_example_id = example_ids[i] + '_' + str(option)
+                per_example_optionwise_evidence_logits = evidence_logits[optionwise_example_id]
+                for sent_idx, sent_logit in per_example_optionwise_evidence_logits.items():
+                    if sent_idx not in per_example_evidence_logits.keys():
+                        per_example_evidence_logits[sent_idx] = sent_logit
+                    else:
+                        per_example_evidence_logits[sent_idx] = sent_logit if sent_logit > per_example_evidence_logits[sent_idx] \
+                            else per_example_evidence_logits[sent_idx]
+            per_example_evidence_sent_idxs = sorted(per_example_evidence_logits.keys(),
+                                                    key=lambda x: per_example_evidence_logits[x], reverse=True)[
+                                             : evidence_len]
+
+        elif data_args.verifier_evidence_type == "optionwise":
+            per_example_evidence_sent_idxs = []
+            for option in range(4):
+                optionwise_example_id = example_ids[i] + '_' + str(option)
+                per_example_optionwise_evidence_logits = evidence_logits[optionwise_example_id]
+
+                per_example_optionwise_evidence_sent_idxs = sorted(per_example_optionwise_evidence_logits.keys(),
+                                                        key=lambda x: per_example_optionwise_evidence_logits[x], reverse=True)[
+                                                 : evidence_len]
+                per_example_evidence_sent_idxs += per_example_optionwise_evidence_sent_idxs
+            per_example_evidence_sent_idxs = list(set(per_example_evidence_sent_idxs))
+        else:
+            raise ValueError("verifier evidence type error!")
+
         evidence_concat = ""
         for evidence_sent_idx in sorted(per_example_evidence_sent_idxs):
             sent_start = per_example_sent_starts[evidence_sent_idx]

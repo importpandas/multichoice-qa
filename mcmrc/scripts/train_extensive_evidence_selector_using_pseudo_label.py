@@ -123,6 +123,11 @@ class DataTrainingArguments(BasicDataTrainingArguments):
             "help": "number of sentences of each evidence"
         },
     )
+    verifier_evidence_type: str = field(
+        default="prediction",
+        metadata={"help": "evidence corresponding to only prediction or all options or strongest evidence, "
+                          "prediction, strongest, optionwise"}
+    )
     train_verifier_with_downsampling: bool = field(
         default=False,
         metadata={
