@@ -462,7 +462,7 @@ def main():
 
         train_answer_verifier_datasets = {k: datasets[k].map(
             partial(pprepare_features_for_training_answer_verifier, answer_logits=answer_logits[k],
-                    evidence_logits=extensive_evidence_logits[k]),
+                    evidence_logits=extensive_evidence_logits[k], is_training=(k == "train")),
             batched=True,
             num_proc=data_args.preprocessing_num_workers,
             remove_columns=column_names,

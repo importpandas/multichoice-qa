@@ -957,6 +957,7 @@ def prepare_features_for_training_answer_verifier(
         evidence_logits=None,
         train_answer_verifier_with_option=False,
         downsampling=False,
+        is_training=False,
         evidence_len=2,
         tokenizer=None,
         data_args=None):
@@ -981,7 +982,7 @@ def prepare_features_for_training_answer_verifier(
 
         prediction = np.argmax(answer_logits[example_id])
         ground_truth = ord(answers[i]) - ord("A")
-        if downsampling and not int(prediction != ground_truth) and random.random() > 0.5:
+        if downsampling and not int(prediction != ground_truth) and random.random() > 0.5 and is_training:
             continue
         labels.append(int(prediction != ground_truth))
 
