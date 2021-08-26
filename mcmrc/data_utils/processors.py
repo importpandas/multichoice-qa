@@ -127,6 +127,122 @@ def prepare_features(examples, tokenizer=None, data_args=None):
     return tokenized_examples
 
 
+def prepare_features_with_data_aug(examples, tokenizer=None, data_args=None, pseudo_label_path=""):
+    contexts = examples['article']
+    answers = examples['answer']
+    options = examples['options']
+    questions = examples['question']
+    example_ids = examples['example_id']
+    sent_starts = examples['article_sent_start']
+
+    all_pseudo_label = load_pseudo_label(pseudo_label_path)
+
+    pseudo_logit = all_pseudo_label['logit']
+    acc = all_pseudo_label['acc']
+    options_prob_diff = all_pseudo_label['options_prob_diff']
+
+    labels = []
+    qa_list = []
+    processed_contexts = []
+
+    shuffled_order_list = list(range(len(answers)))
+    random.shuffle(shuffled_order_list)
+
+    all_example_ids = []
+
+    for i, shuffled_i in zip(range(len(answers)), shuffled_order_list):
+        example_id = example_ids[i]
+        label = ord(answers[i]) - ord("A")
+        question = process_text(questions[i])
+
+        if random.random() < data_args.data_aug_ratio:
+            aug_example_id = example_ids[shuffled_i]
+            aug_article = contexts[shuffled_i]
+            aug_sent_starts = sent_starts[shuffled_i]
+            aug_sent_ends = [char_idx - 1 for char_idx in aug_sent_starts[1:]] + [len(aug_article) - 1]
+
+            options_prob = np.array([item[1] for item in sorted(options_prob_diff[aug_example_id].items(), key=lambda x: x[0])])
+            adverse_option_idx = np.unravel_index(np.argmin(options_prob, axis=None), options_prob.shape)[1]
+            adverse_option = options[shuffled_i][adverse_option_idx]
+            adverse_evidence_logits = options_prob[:, adverse_option_idx]
+
+            evidence_idx = np.argsort(adverse_evidence_logits)[:data_args.aug_evidence_len]
+
+            adverse_evidence = ""
+            for evidence_sent_idx in sorted(evidence_idx):
+                sent_start = aug_sent_starts[evidence_sent_idx]
+                sent_end = aug_sent_ends[evidence_sent_idx]
+                adverse_evidence += aug_article[sent_start: sent_end + 1]
+            adverse_evidence_len = len(tokenizer.encode(adverse_evidence, add_special_tokens=False))
+
+            replaced_option_prob = np.min(np.array([item[1] for item in sorted(options_prob_diff[example_id].items(),
+                                                                        key=lambda x: x[0])]), axis=0)
+            replaced_option_prob[label] = -10000
+            replaced_option_idx = np.argmax(replaced_option_prob)
+
+            qa_pairs = []
+            for j in range(4):
+                if j == replaced_option_idx:
+                    option = process_text(adverse_option)
+                else:
+                    option = process_text(options[i][j])
+
+                if "_" in question:
+                    qa_cat = question.replace("_", option)
+                else:
+                    qa_cat = " ".join([question, option])
+                qa_cat = " ".join(whitespace_tokenize(qa_cat)[- data_args.max_qa_length:])
+                qa_pairs.append(qa_cat)
+
+            qa_len = len(tokenizer.encode(qa_pairs[0], add_special_tokens=False))
+
+            qa_list.append(qa_pairs)
+            labels.append(label)
+            context = process_text(contexts[i])
+            truncated_context_id = tokenizer.encode(context, truncation=True,
+                                                    max_length=data_args.max_seq_length - qa_len - adverse_evidence_len,
+                                                    add_special_tokens=False)
+            processed_context = tokenizer.decode(truncated_context_id, clean_up_tokenization_spaces=False)
+            processed_context += process_text(adverse_evidence)
+            processed_contexts.append([processed_context] * 4)
+            all_example_ids.append(example_id + '&' + aug_example_id)
+
+        qa_pairs = []
+        for j in range(4):
+            option = process_text(options[i][j])
+
+            if "_" in question:
+                qa_cat = question.replace("_", option)
+            else:
+                qa_cat = " ".join([question, option])
+            qa_cat = " ".join(whitespace_tokenize(qa_cat)[- data_args.max_qa_length:])
+            qa_pairs.append(qa_cat)
+        qa_len = len(tokenizer.encode(qa_pairs[0], add_special_tokens=False))
+
+        qa_list.append(qa_pairs)
+        labels.append(label)
+        processed_context = process_text(contexts[i])
+        processed_contexts.append([processed_context] * 4)
+        all_example_ids.append(example_id)
+
+    first_sentences = sum(processed_contexts, [])
+    second_sentences = sum(qa_list, [])
+
+    tokenized_examples = tokenizer(
+        first_sentences,
+        second_sentences,
+        truncation="only_first",
+        max_length=data_args.max_seq_length,
+        padding="max_length" if data_args.pad_to_max_length else False,
+    )
+    tokenized_examples = {k: [v[i: i + 4] for i in range(0, len(v), 4)] for k, v in tokenized_examples.items()}
+
+    tokenized_examples['label'] = labels
+    tokenized_examples['example_ids'] = all_example_ids
+
+    # Un-flatten
+    return tokenized_examples
+
 # Preprocessing the datasets.
 def prepare_features_for_generate_pseudo_label(examples, tokenizer=None, data_args=None):
     contexts = examples['article']

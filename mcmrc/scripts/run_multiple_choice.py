@@ -72,6 +72,21 @@ class DataTrainingArguments(BasicDataTrainingArguments):
     output_prediction_file:  bool = field(
         default=True, metadata={"help": "whether to output model prediction"}
     )
+    train_with_data_aug:  bool = field(
+        default=False, metadata={"help": "whether to train mc model with data augmentation"}
+    )
+    pseudo_label_path: str = field(
+        default="",
+        metadata={"help": "Path to pseudo evidence label"}
+    )
+    data_aug_ratio: float = field(
+        default=0.5,
+        metadata={"help": "the ratio of augmented examples compared to original examples"},
+    )
+    aug_evidence_len: int = field(
+        default=2,
+        metadata={"help": "the length of evidence appended to original passage"},
+    )
 
 
 def main():
@@ -124,7 +139,7 @@ def main():
         raise ValueError("Dataset should be race or dream.")
     else:
         if data_args.dataset == 'race':
-            from mcmrc.data_utils.processors import prepare_features
+            from mcmrc.data_utils.processors import prepare_features, prepare_features_with_data_aug
         if data_args.dataset == 'dream':
             from mcmrc.data_utils.utils_dream import prepare_features
 
@@ -139,6 +154,7 @@ def main():
     datasets = load_dataset(data_args.dataload_script, data_args.dataload_split,
                             data_files=data_files if data_files['train'] is not None else None,
                             data_dir=data_args.data_dir)
+
     if data_args.split_train_dataset:
         holdout_set_start = int(len(datasets['train']) / data_args.n_fold * data_args.holdout_set)
         holdout_set_end = int(len(datasets['train']) / data_args.n_fold * (data_args.holdout_set + 1))
@@ -183,14 +199,37 @@ def main():
     else:
         column_names = datasets["validation"].column_names
 
-    pprepare_features = partial(prepare_features, tokenizer=tokenizer, data_args=data_args)
-    tokenized_datasets = datasets.map(
-        pprepare_features,
-        batched=True,
-        num_proc=data_args.preprocessing_num_workers,
-        remove_columns=column_names,
-        load_from_cache_file=not data_args.overwrite_cache,
-    )
+    if data_args.train_with_data_aug:
+        pprepare_features = partial(prepare_features, tokenizer=tokenizer, data_args=data_args)
+        pprepare_features_with_data_aug = partial(prepare_features_with_data_aug, tokenizer=tokenizer, data_args=data_args,
+                                    pseudo_label_path=data_args.pseudo_label_path)
+        tokenized_train_dataset = datasets['train'].map(
+            pprepare_features_with_data_aug,
+            batched=True,
+            num_proc=data_args.preprocessing_num_workers,
+            remove_columns=column_names,
+            load_from_cache_file=not data_args.overwrite_cache,
+        )
+        shuffled_train_set = tokenized_train_dataset.shuffle(seed=training_args.seed)
+
+        tokenized_datasets = {k: datasets[k].map(
+            pprepare_features,
+            batched=True,
+            num_proc=data_args.preprocessing_num_workers,
+            remove_columns=column_names,
+            load_from_cache_file=not data_args.overwrite_cache,
+        ) for k in datasets.keys() if k != "train"}
+        tokenized_datasets['train'] = shuffled_train_set
+
+    else:
+        pprepare_features = partial(prepare_features, tokenizer=tokenizer, data_args=data_args)
+        tokenized_datasets = datasets.map(
+            pprepare_features,
+            batched=True,
+            num_proc=data_args.preprocessing_num_workers,
+            remove_columns=column_names,
+            load_from_cache_file=not data_args.overwrite_cache,
+        )
 
     if config.model_type == "openai-gpt":
         tokenizer.add_special_tokens({'cls_token': '[CLS]', 'pad_token': '[pad]'})
