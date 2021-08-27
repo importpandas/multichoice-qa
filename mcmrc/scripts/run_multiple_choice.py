@@ -95,6 +95,15 @@ class DataTrainingArguments(BasicDataTrainingArguments):
         default="random",
         metadata={"help": "the evidence insert position of passage"},
     )
+    filter_wrong_example: bool = field(
+        default=False,
+        metadata={"help": "Whether to filter examples wrongly predicted by MRC models"},
+    )
+    filter_short_option: bool = field(
+        default=False,
+        metadata={"help": "Whether to filter examples whose golden answer is too short"},
+    )
+
 
 
 def main():

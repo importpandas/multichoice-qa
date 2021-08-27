@@ -179,7 +179,11 @@ def prepare_features_with_data_aug(examples, tokenizer=None, data_args=None, pse
         all_example_ids.append(orig_example_id)
 
         if random.random() < data_args.data_aug_ratio:
+
             aug_example_id = example_ids[shuffled_i]
+            if data_args.filter_wrong_example:
+                if acc['train'][aug_example_id] == 0:
+                    continue
             aug_label = ord(answers[i]) - ord("A")
             aug_context = contexts[shuffled_i]
             aug_question = process_text(questions[shuffled_i])
@@ -192,6 +196,10 @@ def prepare_features_with_data_aug(examples, tokenizer=None, data_args=None, pse
                 [item[1] for item in sorted(options_prob_diff[aug_example_id].items(), key=lambda x: x[0])])
             if data_args.aug_type == "option":
                 target_option_idx = np.unravel_index(np.argmin(options_prob, axis=None), options_prob.shape)[1]
+                target_option = aug_options[target_option_idx]
+                if data_args.filter_short_option:
+                    if len(target_option.split()) < 5:
+                        continue
             elif data_args.aug_type == "passage":
                 target_option_idx = aug_label
 
