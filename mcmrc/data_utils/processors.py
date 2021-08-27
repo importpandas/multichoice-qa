@@ -90,6 +90,8 @@ def prepare_features(examples, tokenizer=None, data_args=None):
     qa_list = []
     processed_contexts = []
 
+    option_num = len(options[0])
+
     for i in range(len(answers)):
         label = ord(answers[i]) - ord("A")
         labels.append(label)
@@ -97,7 +99,7 @@ def prepare_features(examples, tokenizer=None, data_args=None):
 
         question = process_text(questions[i])
         qa_pairs = []
-        for j in range(4):
+        for j in range(option_num):
             option = process_text(options[i][j])
 
             if "_" in question:
@@ -118,7 +120,7 @@ def prepare_features(examples, tokenizer=None, data_args=None):
         max_length=data_args.max_seq_length,
         padding="max_length" if data_args.pad_to_max_length else False,
     )
-    tokenized_examples = {k: [v[i: i + 4] for i in range(0, len(v), 4)] for k, v in tokenized_examples.items()}
+    tokenized_examples = {k: [v[i: i + option_num] for i in range(0, len(v), option_num)] for k, v in tokenized_examples.items()}
 
     tokenized_examples['label'] = labels
     tokenized_examples['example_ids'] = example_ids
@@ -145,85 +147,113 @@ def prepare_features_with_data_aug(examples, tokenizer=None, data_args=None, pse
     qa_list = []
     processed_contexts = []
 
+    option_num = len(options[0])
+
     shuffled_order_list = list(range(len(answers)))
     random.shuffle(shuffled_order_list)
 
     all_example_ids = []
 
     for i, shuffled_i in zip(range(len(answers)), shuffled_order_list):
-        example_id = example_ids[i]
-        label = ord(answers[i]) - ord("A")
-        question = process_text(questions[i])
+        orig_example_id = example_ids[i]
+        orig_label = ord(answers[i]) - ord("A")
+        orig_context = process_text(contexts[i])
+        orig_question = process_text(questions[i])
+        orig_options = options[i]
+        orig_sent_starts = sent_starts[i]
+
+        orig_qa_pairs = []
+        for j in range(option_num):
+            option = process_text(orig_options[j])
+
+            if "_" in orig_question:
+                qa_cat = orig_question.replace("_", option)
+            else:
+                qa_cat = " ".join([orig_question, option])
+            qa_cat = " ".join(whitespace_tokenize(qa_cat)[- data_args.max_qa_length:])
+            orig_qa_pairs.append(qa_cat)
+
+        qa_list.append(orig_qa_pairs)
+        labels.append(orig_label)
+        processed_contexts.append([orig_context] * option_num)
+        all_example_ids.append(orig_example_id)
 
         if random.random() < data_args.data_aug_ratio:
             aug_example_id = example_ids[shuffled_i]
-            aug_article = contexts[shuffled_i]
+            aug_label = ord(answers[i]) - ord("A")
+            aug_context = contexts[shuffled_i]
+            aug_question = process_text(questions[shuffled_i])
+            aug_options = options[shuffled_i]
             aug_sent_starts = sent_starts[shuffled_i]
-            aug_sent_ends = [char_idx - 1 for char_idx in aug_sent_starts[1:]] + [len(aug_article) - 1]
+            aug_sent_ends = [char_idx - 1 for char_idx in aug_sent_starts[1:]] + [len(aug_context) - 1]
 
-            options_prob = np.array([item[1] for item in sorted(options_prob_diff[aug_example_id].items(), key=lambda x: x[0])])
-            adverse_option_idx = np.unravel_index(np.argmin(options_prob, axis=None), options_prob.shape)[1]
-            adverse_option = options[shuffled_i][adverse_option_idx]
-            adverse_evidence_logits = options_prob[:, adverse_option_idx]
+            # finding evidence for either adverse option or golden answer
+            options_prob = np.array(
+                [item[1] for item in sorted(options_prob_diff[aug_example_id].items(), key=lambda x: x[0])])
+            if data_args.aug_type == "option":
+                target_option_idx = np.unravel_index(np.argmin(options_prob, axis=None), options_prob.shape)[1]
+            elif data_args.aug_type == "passage":
+                target_option_idx = aug_label
 
-            evidence_idx = np.argsort(adverse_evidence_logits)[:data_args.aug_evidence_len]
+            target_evidence_logits = options_prob[:, target_option_idx]
 
-            adverse_evidence = ""
+            evidence_idx = np.argsort(target_evidence_logits)[:data_args.aug_evidence_len]
+
+            target_evidence = ""
             for evidence_sent_idx in sorted(evidence_idx):
                 sent_start = aug_sent_starts[evidence_sent_idx]
                 sent_end = aug_sent_ends[evidence_sent_idx]
-                adverse_evidence += aug_article[sent_start: sent_end + 1]
-            adverse_evidence_len = len(tokenizer.encode(adverse_evidence, add_special_tokens=False))
+                target_evidence += aug_context[sent_start: sent_end + 1]
+            target_evidence_len = len(tokenizer.encode(target_evidence, add_special_tokens=False))
 
-            replaced_option_prob = np.min(np.array([item[1] for item in sorted(options_prob_diff[example_id].items(),
-                                                                        key=lambda x: x[0])]), axis=0)
-            replaced_option_prob[label] = -10000
-            replaced_option_idx = np.argmax(replaced_option_prob)
+            aug_qa_pairs = []
+            if data_args.aug_type == "option":
+                replaced_option_prob = np.min(np.array([item[1] for item in sorted(options_prob_diff[orig_example_id].items(),
+                                                                            key=lambda x: x[0])]), axis=0)
+                replaced_option_prob[orig_label] = -10000
+                replaced_option_idx = np.argmax(replaced_option_prob)
+                for j in range(option_num):
+                    if j == replaced_option_idx:
+                        option = process_text(aug_options[target_option_idx])
+                    else:
+                        option = process_text(options[i][j])
 
-            qa_pairs = []
-            for j in range(4):
-                if j == replaced_option_idx:
-                    option = process_text(adverse_option)
-                else:
-                    option = process_text(options[i][j])
+                    if "_" in orig_question:
+                        qa_cat = orig_question.replace("_", option)
+                    else:
+                        qa_cat = " ".join([orig_question, option])
+                    qa_cat = " ".join(whitespace_tokenize(qa_cat)[- data_args.max_qa_length:])
+                    aug_qa_pairs.append(qa_cat)
+                labels.append(orig_label)
+            elif data_args.aug_type == "passage":
+                for j in range(option_num):
+                    option = process_text(aug_options[j])
 
-                if "_" in question:
-                    qa_cat = question.replace("_", option)
-                else:
-                    qa_cat = " ".join([question, option])
-                qa_cat = " ".join(whitespace_tokenize(qa_cat)[- data_args.max_qa_length:])
-                qa_pairs.append(qa_cat)
+                    if "_" in aug_question:
+                        qa_cat = aug_question.replace("_", option)
+                    else:
+                        qa_cat = " ".join([aug_question, option])
+                    qa_cat = " ".join(whitespace_tokenize(qa_cat)[- data_args.max_qa_length:])
+                    aug_qa_pairs.append(qa_cat)
+                labels.append(aug_label)
 
-            qa_len = len(tokenizer.encode(qa_pairs[0], add_special_tokens=False))
-
-            qa_list.append(qa_pairs)
-            labels.append(label)
-            context = process_text(contexts[i])
-            truncated_context_id = tokenizer.encode(context, truncation=True,
-                                                    max_length=data_args.max_seq_length - qa_len - adverse_evidence_len,
-                                                    add_special_tokens=False)
-            processed_context = tokenizer.decode(truncated_context_id, clean_up_tokenization_spaces=False)
-            processed_context += process_text(adverse_evidence)
-            processed_contexts.append([processed_context] * 4)
-            all_example_ids.append(example_id + '&' + aug_example_id)
-
-        qa_pairs = []
-        for j in range(4):
-            option = process_text(options[i][j])
-
-            if "_" in question:
-                qa_cat = question.replace("_", option)
+            qa_len = len(tokenizer.encode(aug_qa_pairs[0], add_special_tokens=False))
+            if data_args.aug_evidence_insert_pos == "random":
+                insert_pos = random.choice(orig_sent_starts)
+                processed_context = process_text(orig_context[0:insert_pos] + target_evidence + orig_context[insert_pos:])
+            elif data_args.aug_evidence_insert_pos == "end":
+                truncated_context_id = tokenizer.encode(orig_context, truncation=True,
+                                                        max_length=data_args.max_seq_length - qa_len - target_evidence_len,
+                                                        add_special_tokens=False)
+                processed_context = tokenizer.decode(truncated_context_id, clean_up_tokenization_spaces=False)
+                processed_context += process_text(target_evidence)
             else:
-                qa_cat = " ".join([question, option])
-            qa_cat = " ".join(whitespace_tokenize(qa_cat)[- data_args.max_qa_length:])
-            qa_pairs.append(qa_cat)
-        qa_len = len(tokenizer.encode(qa_pairs[0], add_special_tokens=False))
+                raise ValueError("Error: aug_evidence_insert_pos must be random or end")
 
-        qa_list.append(qa_pairs)
-        labels.append(label)
-        processed_context = process_text(contexts[i])
-        processed_contexts.append([processed_context] * 4)
-        all_example_ids.append(example_id)
+            processed_contexts.append([processed_context] * option_num)
+            qa_list.append(aug_qa_pairs)
+
+            all_example_ids.append(orig_example_id + '&' + aug_example_id)
 
     first_sentences = sum(processed_contexts, [])
     second_sentences = sum(qa_list, [])
@@ -235,13 +265,14 @@ def prepare_features_with_data_aug(examples, tokenizer=None, data_args=None, pse
         max_length=data_args.max_seq_length,
         padding="max_length" if data_args.pad_to_max_length else False,
     )
-    tokenized_examples = {k: [v[i: i + 4] for i in range(0, len(v), 4)] for k, v in tokenized_examples.items()}
+    tokenized_examples = {k: [v[i: i + option_num] for i in range(0, len(v), option_num)] for k, v in tokenized_examples.items()}
 
     tokenized_examples['label'] = labels
     tokenized_examples['example_ids'] = all_example_ids
 
     # Un-flatten
     return tokenized_examples
+
 
 # Preprocessing the datasets.
 def prepare_features_for_generate_pseudo_label(examples, tokenizer=None, data_args=None):
@@ -260,6 +291,8 @@ def prepare_features_for_generate_pseudo_label(examples, tokenizer=None, data_ar
     features['example_ids'] = []
     features['label'] = []
 
+    option_num = len(options[0])
+
     for i in range(len(answers)):
 
         # processed_contexts.append([process_text(contexts[i])] * 4)
@@ -273,7 +306,7 @@ def prepare_features_for_generate_pseudo_label(examples, tokenizer=None, data_ar
         choices_inputs = []
         all_text_b = []
         all_text_b_len = []
-        for j in range(4):
+        for j in range(option_num):
             option = process_text(options[i][j])
 
             if "_" in question:
@@ -287,7 +320,7 @@ def prepare_features_for_generate_pseudo_label(examples, tokenizer=None, data_ar
             all_text_b.append(truncated_text_b)
             all_text_b_len.append(len(tokenizer.encode(truncated_text_b, add_special_tokens=False)))
 
-        for j in range(4):
+        for j in range(option_num):
             text_b = all_text_b[j] + tokenizer.pad_token * (max(all_text_b_len) - all_text_b_len[j])
 
             inputs = tokenizer(

@@ -87,6 +87,14 @@ class DataTrainingArguments(BasicDataTrainingArguments):
         default=2,
         metadata={"help": "the length of evidence appended to original passage"},
     )
+    aug_type: str = field(
+        default="option",
+        metadata={"help": "data augmentation with disturbed passage or disturbed option"},
+    )
+    aug_evidence_insert_pos: str = field(
+        default="random",
+        metadata={"help": "the evidence insert position of passage"},
+    )
 
 
 def main():
@@ -138,10 +146,7 @@ def main():
     if data_args.dataset not in ['race', 'dream']:
         raise ValueError("Dataset should be race or dream.")
     else:
-        if data_args.dataset == 'race':
-            from mcmrc.data_utils.processors import prepare_features, prepare_features_with_data_aug
-        if data_args.dataset == 'dream':
-            from mcmrc.data_utils.utils_dream import prepare_features
+        from mcmrc.data_utils.processors import prepare_features, prepare_features_with_data_aug
 
     # In distributed training, the load_dataset function guarantee that only one local process can concurrently
     # download the dataset.
@@ -154,6 +159,12 @@ def main():
     datasets = load_dataset(data_args.dataload_script, data_args.dataload_split,
                             data_files=data_files if data_files['train'] is not None else None,
                             data_dir=data_args.data_dir)
+    # datasets = load_dataset(data_args.dataload_script, data_args.dataload_split,
+    #                         data_files=data_files if data_files['train'] is not None else None,
+    #                         data_dir=data_args.data_dir,
+    #                         split={'train': ReadInstruction('train', from_=0, to=5, unit='abs'),
+    #                                'validation': ReadInstruction('validation', from_=0, to=5, unit='abs'),
+    #                                'test': ReadInstruction('test', from_=0, to=5, unit='abs')})
 
     if data_args.split_train_dataset:
         holdout_set_start = int(len(datasets['train']) / data_args.n_fold * data_args.holdout_set)

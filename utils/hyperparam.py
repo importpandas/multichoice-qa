@@ -71,6 +71,8 @@ def hyperparam_path_for_baseline(model_args, data_args, training_args):
         exp_name += f'__train_with_data_aug_{data_args.train_with_data_aug}'
         exp_name += f'__data_aug_ratio_{data_args.data_aug_ratio}'
         exp_name += f'__aug_evidence_len_{data_args.aug_evidence_len}'
+        exp_name += f'__aug_type_{data_args.aug_type}'
+        exp_name += f'__aug_evi_insert_pos_{data_args.aug_evidence_insert_pos}'
 
     exp_path = os.path.join(training_args.output_dir, dataset_name, model_type, exp_name, now_time)
 
