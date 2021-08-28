@@ -93,6 +93,12 @@ class BasicDataTrainingArguments:
     )
 
     def __post_init__(self):
+        if self.train_file is not None and self.train_file.lower() == 'none':
+            self.train_file = None
+        if self.validation_file is not None and self.validation_file.lower() == 'none':
+            self.validation_file = None
+        if self.test_file is not None and self.test_file.lower() == 'none':
+            self.test_file = None
         if self.train_file is not None:
             extension = self.train_file.split(".")[-1]
             assert extension in ["csv", "json"], "`train_file` should be a csv or a json file."
