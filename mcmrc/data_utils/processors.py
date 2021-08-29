@@ -95,7 +95,7 @@ def prepare_features(examples, tokenizer=None, data_args=None):
     for i in range(len(answers)):
         label = ord(answers[i]) - ord("A")
         labels.append(label)
-        processed_contexts.append([process_text(contexts[i])] * 4)
+        processed_contexts.append([process_text(contexts[i])] * num_choices)
 
         question = process_text(questions[i])
         qa_pairs = []
