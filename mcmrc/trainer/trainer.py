@@ -576,6 +576,9 @@ class Trainer:
             remove_columns=eval_dataset.column_names,
             load_from_cache_file=False,
         )
+        evidence_sentences = {eid: evidence_sent for eid, evidence_sent in zip(processed_datasets['example_ids'],
+                                                                               processed_datasets['evidence_sentence'])}
+        processed_datasets = processed_datasets.remove_columns("evidence_sentence")
 
         start_time = time.time()
         evidence_generator = self.model
@@ -609,7 +612,7 @@ class Trainer:
         n_samples = len(processed_datasets)
         output.metrics.update(speed_metrics(metric_key_prefix, start_time, n_samples))
 
-        return output.metrics
+        return (output.metrics, evidence_sentences)
 
     def evidence_generating(self,
                             eval_dataset,
@@ -716,12 +719,15 @@ class Trainer:
         evidence_logits = self.evidence_generating(eval_dataset, feature_func_for_evidence_generating)
 
         metrics = {}
-        for evidence_len in [1, 2, 3, 4]:
+        all_evidence_sentence = {}
+        for evidence_len in [1, 2, 3]:
             pprepare_feature_func = partial(feature_func_for_evidence_reading, evidence_len=evidence_len, evidence_logits=evidence_logits)
-            output = self.evidence_reading(evidence_reader, eval_dataset,  pprepare_feature_func, metric_key_prefix=f'fulleval{evidence_len}')
+            output, evidence_sentence = self.evidence_reading(evidence_reader, eval_dataset,
+                                                              pprepare_feature_func, metric_key_prefix=f'fulleval{evidence_len}')
+            all_evidence_sentence[evidence_len] = evidence_sentence
             metrics = {**metrics, **output}
 
-        return metrics
+        return metrics, all_evidence_sentence
         # return output.metrics
 
     def evaluate_intensive_selector_with_explicit_reader(

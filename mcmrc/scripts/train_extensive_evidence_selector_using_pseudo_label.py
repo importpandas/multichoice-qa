@@ -315,7 +315,7 @@ def main():
 
     pprepare_features_for_initializing_evidence_selector = partial(
         prepare_features_for_initializing_extensive_evidence_selector,
-        evidence_len=data_args.evidence_sampling_num,
+        evidence_sampling_num=data_args.evidence_sampling_num,
         tokenizer=tokenizer,
         data_args=data_args,
         pseudo_label_path=data_args.pseudo_label_path)
@@ -514,7 +514,7 @@ def main():
         for split in ["validation", "test"]:
             logger.info(f"*** Evaluate {split} set ***")
             results = extensive_trainer.evaluate(train_extensive_evidence_selector_datasets[split]).metrics
-            fulleval_results = extensive_trainer.evaluate_extensive_selector_with_explicit_reader(
+            fulleval_results, all_evidence_sentences = extensive_trainer.evaluate_extensive_selector_with_explicit_reader(
                 evidence_reader=evidence_reader,
                 eval_dataset=datasets[split],
                 feature_func_for_evidence_reading=pprepare_features_for_reading_optionwise_evidence,
@@ -527,6 +527,10 @@ def main():
                 for key, value in sorted(metrics.items()):
                     logger.info(f"  {key} = {value}")
                     writer.write(f"{key} = {value}\n")
+
+            output_evidence_file = os.path.join(training_args.output_dir, f"{split}_evidence.json")
+            with open(output_evidence_file, "w") as f:
+                json.dump(all_evidence_sentences, f)
 
     if training_args.eval_intensive_evidence_selector:
 

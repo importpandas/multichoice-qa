@@ -123,7 +123,6 @@ class Dream(datasets.GeneratorBasedBuilder):
         logging.info("⏳ Generating examples from = %s", filepath)
         with open(filepath, encoding="utf-8") as f:
             dialogues = json.load(f)
-            counter = 0
             for dialogue in dialogues:
                 questions = dialogue[1]
                 dialogue_id = dialogue[2]
@@ -136,17 +135,16 @@ class Dream(datasets.GeneratorBasedBuilder):
                     if i > 0 and sent_start - article_sent_start[i - 1] <= 3:
                         article_sent_start.pop(i)
 
-                for que in questions:
+                for i, que in enumerate(questions):
                     options = que["choice"]
                     answer = que["answer"]
                     label = options.index(answer)
                     label = chr(label + ord('A'))
-                    yield counter, {
-                        "example_id": dialogue_id + '_' + str(counter),
+                    yield i, {
+                        "example_id": dialogue_id + '_' + str(i),
                         "article": article,
                         "article_sent_start": article_sent_start,
                         "question": que["question"],
                         "answer": label,
                         "options": que["choice"],
                     }
-                    counter += 1

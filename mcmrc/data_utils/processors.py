@@ -672,6 +672,8 @@ def prepare_features_for_initializing_extensive_evidence_selector(examples, evid
     labels = []
     processed_contexts = []
 
+    num_choices = len(options[0])
+
     for i in range(len(answers)):
         full_context = contexts[i]
         example_id = example_ids[i]
@@ -706,7 +708,7 @@ def prepare_features_for_initializing_extensive_evidence_selector(examples, evid
                                          list(range(len(per_example_sent_starts) - 1))))
         negative_sent_num = evidence_sampling_num if evidence_sampling_num <= len(all_irre_sent_idxs) else len(
             all_irre_sent_idxs)
-        irre_options = random.sample(list(range(4)), negative_sent_num)
+        irre_options = random.sample(list(range(num_choices)), negative_sent_num)
         for idx, irre_sent_idx in enumerate(random.sample(all_irre_sent_idxs, negative_sent_num)):
             sent_start = per_example_sent_starts[irre_sent_idx]
             sent_end = per_example_sent_starts[irre_sent_idx + 1]
@@ -931,6 +933,9 @@ def prepare_features_for_reading_optionwise_evidence(examples, evidence_logits=N
     qa_list = []
     processed_contexts = []
     all_example_ids = []
+    evidence_sentences = []
+
+    num_choices = len(options[0])
 
     for i in range(len(answers)):
         full_context = contexts[i]
@@ -938,7 +943,7 @@ def prepare_features_for_reading_optionwise_evidence(examples, evidence_logits=N
         # label = ord(answers[i]) - ord("A")
 
         question = process_text(questions[i])
-        for j in range(4):
+        for j in range(num_choices):
             labels.append(j)
             example_id = example_ids[i] + '_' + str(j)
             all_example_ids.append(example_id)
@@ -957,11 +962,12 @@ def prepare_features_for_reading_optionwise_evidence(examples, evidence_logits=N
                 sent_start = per_example_sent_starts[evidence_sent_idx]
                 sent_end = per_example_sent_starts[evidence_sent_idx + 1]
                 evidence_concat += full_context[sent_start: sent_end]
+            evidence_sentences.append(evidence_concat)
 
-            processed_contexts.append([evidence_concat] * 4)
+            processed_contexts.append([evidence_concat] * num_choices)
 
             qa_pairs = []
-            for k in range(4):
+            for k in range(num_choices):
                 option = process_text(options[i][k])
 
                 if "_" in question:
@@ -982,8 +988,11 @@ def prepare_features_for_reading_optionwise_evidence(examples, evidence_logits=N
         max_length=data_args.max_evidence_seq_length,
         padding="max_length" if data_args.pad_to_max_length else False,
     )
+    tokenized_examples = {k: [v[i: i + num_choices] for i in range(0, len(v), num_choices)] for k, v in tokenized_examples.items()}
+
     tokenized_examples['label'] = labels
     tokenized_examples['example_ids'] = all_example_ids
+    tokenized_examples['evidence_sentence'] = evidence_sentences
 
     # Un-flatten
     return tokenized_examples
