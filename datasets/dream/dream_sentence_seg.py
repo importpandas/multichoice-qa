@@ -123,6 +123,7 @@ class Dream(datasets.GeneratorBasedBuilder):
         logging.info("⏳ Generating examples from = %s", filepath)
         with open(filepath, encoding="utf-8") as f:
             dialogues = json.load(f)
+            counter = 0
             for dialogue in dialogues:
                 questions = dialogue[1]
                 dialogue_id = dialogue[2]
@@ -140,7 +141,7 @@ class Dream(datasets.GeneratorBasedBuilder):
                     answer = que["answer"]
                     label = options.index(answer)
                     label = chr(label + ord('A'))
-                    yield i, {
+                    yield counter, {
                         "example_id": dialogue_id + '_' + str(i),
                         "article": article,
                         "article_sent_start": article_sent_start,
@@ -148,3 +149,4 @@ class Dream(datasets.GeneratorBasedBuilder):
                         "answer": label,
                         "options": que["choice"],
                     }
+                    counter += 1

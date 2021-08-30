@@ -104,7 +104,7 @@ class Race(datasets.GeneratorBasedBuilder):
         """Yields examples."""
         current_path = Path(train_test_or_eval)
         files_in_dir = [str(f.absolute()) for f in sorted(current_path.glob("**/*.txt"))]
-        for file in sorted(files_in_dir):
+        for file_idx, file in enumerate(sorted(files_in_dir)):
             with open(file, encoding="utf-8") as f:
                 data = json.load(f)
                 questions = data["questions"]
@@ -117,7 +117,7 @@ class Race(datasets.GeneratorBasedBuilder):
                     question = questions[i]
                     answer = answers[i]
                     option = options[i]
-                    yield i, {
+                    yield f"{file_idx}_{i}", {
                         "example_id": data["id"].replace(".txt", "_")+str(i),
                         "article": article,
                         "article_sent_start": article_sent_start,
