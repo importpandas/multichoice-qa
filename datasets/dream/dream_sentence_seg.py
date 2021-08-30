@@ -132,6 +132,9 @@ class Dream(datasets.GeneratorBasedBuilder):
                 article = process_text(dialogue_text)
                 doc = nlp(article)
                 article_sent_start = [sent.start_char for sent in doc.sents]
+                for i, sent_start in enumerate(article_sent_start):
+                    if i > 0 and sent_start - article_sent_start[i - 1] <= 3:
+                        article_sent_start.pop(i)
 
                 for que in questions:
                     options = que["choice"]

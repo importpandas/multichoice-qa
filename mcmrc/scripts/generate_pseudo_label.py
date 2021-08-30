@@ -94,10 +94,7 @@ def main():
     if data_args.dataset not in ['race', 'dream']:
         raise ValueError("Dataset should be race or dream.")
     else:
-        if data_args.dataset == 'race':
-            from mcmrc.data_utils.processors import prepare_features_for_generate_pseudo_label
-        if data_args.dataset == 'dream':
-            pass
+        from mcmrc.data_utils.processors import prepare_features_for_generate_pseudo_label
 
     # In distributed training, the load_dataset function guarantee that only one local process can concurrently
     # download the dataset.
