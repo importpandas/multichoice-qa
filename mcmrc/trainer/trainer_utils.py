@@ -28,9 +28,9 @@ def compute_mc_metrics(eval_predictions, mask=None):
     predictions, label_ids = eval_predictions
     preds = np.argmax(predictions, axis=1)
     if mask is None:
-        acc = (preds == label_ids).astype(np.float32).mean().item()
+        acc = ((preds == label_ids).astype(np.float32).mean().item()) * 100
     else:
-        acc = ((preds == label_ids) & np.array(mask)).sum() / np.array(mask).sum()
+        acc = (((preds == label_ids) & np.array(mask)).sum() / np.array(mask).sum()) * 100
     return {"accuracy": acc}
 
 

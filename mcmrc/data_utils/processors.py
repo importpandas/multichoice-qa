@@ -3,7 +3,9 @@ import unicodedata
 import torch
 import random
 import numpy as np
+import json
 import spacy
+nlp = spacy.load("en_core_web_sm")
 
 
 def whitespace_tokenize(text):
@@ -30,6 +32,43 @@ def load_pseudo_label(pseudo_label_path):
                                                         **pseudo_label['options_prob_diff']['test'])
 
     return pseudo_label_merged
+
+
+def load_exp_race_data(exp_race_file):
+    print(exp_race_file)
+    all_examples = dict.fromkeys(["example_id", "article", 'article_sent_start', "question", "answer", "options", 'evidence'], None)
+    for k in all_examples.keys():
+        all_examples[k] = []
+    less_option_num = 0
+    with open(exp_race_file) as f:
+        race_data = json.load(f)['data']
+        for data in race_data:
+            questions = data["questions"]
+            answers = data["answers"]
+            options = data["options"]
+            article = process_text(data["article"])
+            evidences = data['evidences']
+            doc = nlp(article)
+            article_sent_start = [sent.start_char for sent in doc.sents]
+            for i in range(len(questions)):
+                question = questions[i]
+                answer = answers[i]
+                option = options[i]
+                evidence = evidences[i]
+                if len(option) < 4:
+                    option = option + [""] * (4 - len(option))
+                    less_option_num += 1
+                all_examples["example_id"].append(data["id"] + '-' + str(i))
+                all_examples["article"].append(article)
+                all_examples["article_sent_start"].append(article_sent_start)
+                all_examples["question"].append(question)
+                all_examples["answer"].append(answer)
+                all_examples["options"].append(option)
+                all_examples["evidence"].append(evidence)
+                if len(all_examples["example_id"]) > 10:
+                    return all_examples
+    print(f"total {len(all_examples['example_id'])} less {less_option_num}")
+    return all_examples
 
 
 def process_text(inputs, remove_space=True, lower=False):
@@ -1081,6 +1120,7 @@ def prepare_features_for_intensive_evidence_selector(
     processed_contexts = []
 
     num_choices = len(options[0])
+    evidence_with_logits = []
 
     for i in range(len(answers)):
         full_context = contexts[i]
@@ -1108,6 +1148,7 @@ def prepare_features_for_intensive_evidence_selector(
         per_example_sent_starts = sent_starts[i]
         per_example_sent_starts.append(len(full_context))
 
+        per_example_evidence_with_logits = [[] for _ in range(num_choices)]
         per_example_evidence_sent_idxs = [[] for _ in range(num_choices)]
         sent_num = len(evidence_logits[example_ids[i] + '_' + str(0)])
         if train_intensive_selector_with_non_overlapping_evidence:
@@ -1137,10 +1178,14 @@ def prepare_features_for_intensive_evidence_selector(
                     all_sorted_evidence_idxes[max_score_idx][1] = -1
             for j in range(num_choices):
                 evidence_concat = ""
+                optionwise_example_id = example_ids[i] + '_' + str(j)
+
                 for evidence_sent_idx in sorted(per_example_evidence_sent_idxs[j]):
                     sent_start = per_example_sent_starts[evidence_sent_idx]
                     sent_end = per_example_sent_starts[evidence_sent_idx + 1]
                     evidence_concat += full_context[sent_start: sent_end]
+                    per_example_evidence_with_logits[j].append([evidence_logits[optionwise_example_id][evidence_sent_idx],
+                                                                full_context[sent_start: sent_end]])
                 context_list.append(evidence_concat)
         else:
             for j in range(num_choices):
@@ -1158,9 +1203,11 @@ def prepare_features_for_intensive_evidence_selector(
                     sent_start = per_example_sent_starts[evidence_sent_idx]
                     sent_end = per_example_sent_starts[evidence_sent_idx + 1]
                     evidence_concat += full_context[sent_start: sent_end]
+                    per_example_evidence_with_logits[j].append([evidence_logits[optionwise_example_id][evidence_sent_idx],
+                                                                full_context[sent_start: sent_end]])
 
                 context_list.append(evidence_concat)
-
+        evidence_with_logits.append(per_example_evidence_with_logits)
         processed_contexts.append(context_list)
         qa_list.append(qa_pairs)
 
@@ -1177,6 +1224,8 @@ def prepare_features_for_intensive_evidence_selector(
     tokenized_examples = {k: [v[i: i + num_choices] for i in range(0, len(v), num_choices)] for k, v in tokenized_examples.items()}
     tokenized_examples['label'] = labels
     tokenized_examples['example_ids'] = example_ids
+    tokenized_examples['evidence_sentence'] = [[[i[1] for i in option_evi] for option_evi in evi] for evi in evidence_with_logits]
+    tokenized_examples['evidence_logit'] = [[[i[0] for i in option_evi] for option_evi in evi] for evi in evidence_with_logits]
 
     # Un-flatten
     return tokenized_examples
