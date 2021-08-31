@@ -65,8 +65,8 @@ def load_exp_race_data(exp_race_file):
                 all_examples["answer"].append(answer)
                 all_examples["options"].append(option)
                 all_examples["evidence"].append(evidence)
-                if len(all_examples["example_id"]) > 10:
-                    return all_examples
+                # if len(all_examples["example_id"]) > 10:
+                #     return all_examples
     print(f"total {len(all_examples['example_id'])} less {less_option_num}")
     return all_examples
 
