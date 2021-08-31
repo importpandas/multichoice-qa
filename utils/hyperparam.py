@@ -63,21 +63,21 @@ def hyperparam_path_for_baseline(model_args, data_args, training_args):
     dataset_name = f'dataset_{data_args.dataset}'
     model_type = f'model_{model_args.model_name_or_path.split("/")[-1]}'
     now_time = time.strftime("%Y_%m_%d_%H:%M:%S", time.localtime())
-    exp_name = hyperparam_base(model_args, data_args, training_args)
-    if data_args.split_train_dataset:
-        exp_name += f'__n_fold_{data_args.n_fold}'
-        exp_name += f'__holdout_set_{data_args.holdout_set}'
-    if data_args.train_with_data_aug:
-        exp_name += f'__train_with_data_aug_{data_args.train_with_data_aug}'
-        exp_name += f'__data_aug_ratio_{data_args.data_aug_ratio}'
-        exp_name += f'__aug_evidence_len_{data_args.aug_evidence_len}'
-        exp_name += f'__aug_type_{data_args.aug_type}'
-        exp_name += f'__aug_evi_insert_pos_{data_args.aug_evidence_insert_pos}'
-        exp_name += f'__filter_wrong_example_{data_args.filter_wrong_example}'
-        exp_name += f'__filter_short_option_{data_args.filter_short_option}'
-
-
-
+    try:
+        exp_name = hyperparam_base(model_args, data_args, training_args)
+        if data_args.split_train_dataset:
+            exp_name += f'__n_fold_{data_args.n_fold}'
+            exp_name += f'__holdout_set_{data_args.holdout_set}'
+        if data_args.train_with_data_aug:
+            exp_name += f'__train_with_data_aug_{data_args.train_with_data_aug}'
+            exp_name += f'__data_aug_ratio_{data_args.data_aug_ratio}'
+            exp_name += f'__aug_evidence_len_{data_args.aug_evidence_len}'
+            exp_name += f'__aug_type_{data_args.aug_type}'
+            exp_name += f'__aug_evi_insert_pos_{data_args.aug_evidence_insert_pos}'
+            exp_name += f'__filter_wrong_example_{data_args.filter_wrong_example}'
+            exp_name += f'__filter_short_option_{data_args.filter_short_option}'
+    except:
+        exp_name = hyperparam_base(model_args, data_args, training_args)
 
     exp_path = os.path.join(training_args.output_dir, dataset_name, model_type, exp_name, now_time)
 

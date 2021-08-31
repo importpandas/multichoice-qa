@@ -10,6 +10,7 @@ from transformers import AdamW, get_linear_schedule_with_warmup
 
 from transformers.data.data_collator import DataCollatorWithPadding, default_data_collator
 
+from tqdm import tqdm
 from typing import Dict, List, Optional, Tuple, Union
 
 import torch
@@ -513,7 +514,7 @@ class Trainer:
 
         all_example_ids = []
         start_time = timeit.default_timer()
-        for step, inputs in enumerate(eval_dataloader):
+        for step, inputs in tqdm(enumerate(eval_dataloader)):
             if 'example_ids' in inputs.keys():
                 example_ids = inputs.pop('example_ids')
                 all_example_ids += example_ids
@@ -576,9 +577,12 @@ class Trainer:
             remove_columns=eval_dataset.column_names,
             load_from_cache_file=False,
         )
-        evidence_sentences = {eid: evidence_sent for eid, evidence_sent in zip(processed_datasets['example_ids'],
-                                                                               processed_datasets['evidence_sentence'])}
-        processed_datasets = processed_datasets.remove_columns("evidence_sentence")
+        if 'evidence_sentence' in processed_datasets.column_names:
+            evidence_sentences = {eid: evidence_sent for eid, evidence_sent in zip(processed_datasets['example_ids'],
+                                                                                   processed_datasets['evidence_sentence'])}
+            processed_datasets = processed_datasets.remove_columns("evidence_sentence")
+        else:
+            evidence_sentences = {}
 
         start_time = time.time()
         evidence_generator = self.model
@@ -608,11 +612,10 @@ class Trainer:
         output.metrics.update({f'{metric_key_prefix}_right_acc': right_option_acc['accuracy'],
                                f'{metric_key_prefix}_wrong_acc': wrong_option_acc['accuracy']})
 
-
         n_samples = len(processed_datasets)
         output.metrics.update(speed_metrics(metric_key_prefix, start_time, n_samples))
 
-        return (output.metrics, evidence_sentences)
+        return output.metrics, evidence_sentences
 
     def evidence_generating(self,
                             eval_dataset,

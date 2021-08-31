@@ -129,6 +129,67 @@ def prepare_features(examples, tokenizer=None, data_args=None):
     return tokenized_examples
 
 
+# Preprocessing the datasets.
+def prepare_features_for_evaluating_evidence(examples, evidence_sentences=None, tokenizer=None, data_args=None):
+    contexts = examples['article']
+    answers = examples['answer']
+    options = examples['options']
+    questions = examples['question']
+    example_ids = examples['example_id']
+
+    labels = []
+    qa_list = []
+    processed_contexts = []
+    all_example_ids = []
+
+    num_choices = len(options[0])
+
+    for i in range(len(answers)):
+        full_context = contexts[i]
+
+        # label = ord(answers[i]) - ord("A")
+
+        question = process_text(questions[i])
+        for j in range(num_choices):
+            labels.append(j)
+            example_id = example_ids[i] + '_' + str(j)
+            all_example_ids.append(example_id)
+
+            evidence = evidence_sentences[example_id]
+
+            processed_contexts.append([evidence] * num_choices)
+
+            qa_pairs = []
+            for k in range(num_choices):
+                option = process_text(options[i][k])
+
+                if "_" in question:
+                    qa_cat = question.replace("_", option)
+                else:
+                    qa_cat = " ".join([question, option])
+                qa_cat = " ".join(whitespace_tokenize(qa_cat)[- data_args.max_qa_length:])
+                qa_pairs.append(qa_cat)
+            qa_list.append(qa_pairs)
+
+    first_sentences = sum(processed_contexts, [])
+    second_sentences = sum(qa_list, [])
+
+    tokenized_examples = tokenizer(
+        first_sentences,
+        second_sentences,
+        truncation="only_first",
+        max_length=data_args.max_evidence_seq_length,
+        padding="max_length" if data_args.pad_to_max_length else False,
+    )
+    tokenized_examples = {k: [v[i: i + num_choices] for i in range(0, len(v), num_choices)] for k, v in tokenized_examples.items()}
+
+    tokenized_examples['label'] = labels
+    tokenized_examples['example_ids'] = all_example_ids
+
+    # Un-flatten
+    return tokenized_examples
+
+
 def prepare_features_with_data_aug(examples, tokenizer=None, data_args=None, pseudo_label_path=""):
     contexts = examples['article']
     answers = examples['answer']
@@ -797,6 +858,8 @@ def prepare_features_for_generating_optionwise_evidence(examples, tokenizer=None
     all_example_ids = []
     all_sent_idx = []
 
+    num_choices = len(options[0])
+
     for i in range(len(answers)):
         full_context = contexts[i]
 
@@ -809,7 +872,7 @@ def prepare_features_for_generating_optionwise_evidence(examples, tokenizer=None
             sent_start = per_example_sent_starts[j]
             sent_end = per_example_sent_starts[j + 1]
             sent = full_context[sent_start: sent_end]
-            for k in range(4):
+            for k in range(num_choices):
                 option = process_text(options[i][k])
                 qa_concat = processed_question + "[SEP]"
                 qa_concat += option
@@ -1017,6 +1080,8 @@ def prepare_features_for_intensive_evidence_selector(
     qa_list = []
     processed_contexts = []
 
+    num_choices = len(options[0])
+
     for i in range(len(answers)):
         full_context = contexts[i]
 
@@ -1028,7 +1093,7 @@ def prepare_features_for_intensive_evidence_selector(
 
         if train_intensive_selector_with_option:
             qa_pairs = []
-            for j in range(4):
+            for j in range(num_choices):
                 option = process_text(options[i][j])
 
                 if "_" in question:
@@ -1038,19 +1103,18 @@ def prepare_features_for_intensive_evidence_selector(
                 qa_cat = " ".join(whitespace_tokenize(qa_cat)[- data_args.max_qa_length:])
                 qa_pairs.append(qa_cat)
         else:
-            qa_pairs = [question] * 4
-
+            qa_pairs = [question] * num_choices
 
         per_example_sent_starts = sent_starts[i]
         per_example_sent_starts.append(len(full_context))
 
-        per_example_evidence_sent_idxs = [[] for _ in range(4)]
+        per_example_evidence_sent_idxs = [[] for _ in range(num_choices)]
         sent_num = len(evidence_logits[example_ids[i] + '_' + str(0)])
         if train_intensive_selector_with_non_overlapping_evidence:
             all_sorted_evidence_idxes = []
-            max_evidence_num = 4 * evidence_len if 4 * evidence_len <= sent_num else sent_num
+            max_evidence_num = num_choices * evidence_len if num_choices * evidence_len <= sent_num else sent_num
 
-            for j in range(4):
+            for j in range(num_choices):
                 optionwise_example_id = example_ids[i] + '_' + str(j)
 
                 per_option_evidence_logits = evidence_logits[optionwise_example_id]
@@ -1071,7 +1135,7 @@ def prepare_features_for_intensive_evidence_selector(
                     all_sorted_evidence_idxes[torch.where(all_sorted_evidence_idxes == max_score_evidence)[:-1] + (1, )] = -1
                 else:
                     all_sorted_evidence_idxes[max_score_idx][1] = -1
-            for j in range(4):
+            for j in range(num_choices):
                 evidence_concat = ""
                 for evidence_sent_idx in sorted(per_example_evidence_sent_idxs[j]):
                     sent_start = per_example_sent_starts[evidence_sent_idx]
@@ -1079,7 +1143,7 @@ def prepare_features_for_intensive_evidence_selector(
                     evidence_concat += full_context[sent_start: sent_end]
                 context_list.append(evidence_concat)
         else:
-            for j in range(4):
+            for j in range(num_choices):
                 optionwise_example_id = example_ids[i] + '_' + str(j)
 
                 per_example_evidence_logits = evidence_logits[optionwise_example_id]
@@ -1110,7 +1174,7 @@ def prepare_features_for_intensive_evidence_selector(
         max_length=data_args.max_evidence_seq_length,
         padding="max_length" if data_args.pad_to_max_length else False,
     )
-    tokenized_examples = {k: [v[i: i + 4] for i in range(0, len(v), 4)] for k, v in tokenized_examples.items()}
+    tokenized_examples = {k: [v[i: i + num_choices] for i in range(0, len(v), num_choices)] for k, v in tokenized_examples.items()}
     tokenized_examples['label'] = labels
     tokenized_examples['example_ids'] = example_ids
 
