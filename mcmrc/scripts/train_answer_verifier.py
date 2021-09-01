@@ -223,9 +223,6 @@ def main():
                             data_dir=data_args.data_dir)
     if training_args.eval_on_exp_race:
         exp_dataset = Dataset.from_dict(load_exp_race_data(data_args.exp_race_file))
-        golden_evidence = {eid: evidence_sent for eid, evidence_sent in zip(exp_dataset['example_id'],
-                                                                               exp_dataset['evidence'])}
-        exp_dataset = exp_dataset.remove_columns("evidence")
 
 
     # Load pretrained model and tokenizer

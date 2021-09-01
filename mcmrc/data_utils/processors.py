@@ -36,7 +36,7 @@ def load_pseudo_label(pseudo_label_path):
 
 def load_exp_race_data(exp_race_file):
     print(exp_race_file)
-    all_examples = dict.fromkeys(["example_id", "article", 'article_sent_start', "question", "answer", "options", 'evidence'], None)
+    all_examples = dict.fromkeys(["example_id", "article", 'article_sent_start', "question", "answer", "options"], None)
     for k in all_examples.keys():
         all_examples[k] = []
     less_option_num = 0
@@ -47,14 +47,12 @@ def load_exp_race_data(exp_race_file):
             answers = data["answers"]
             options = data["options"]
             article = process_text(data["article"])
-            evidences = data['evidences']
             doc = nlp(article)
             article_sent_start = [sent.start_char for sent in doc.sents]
             for i in range(len(questions)):
                 question = questions[i]
                 answer = answers[i]
                 option = options[i]
-                evidence = evidences[i]
                 if len(option) < 4:
                     option = option + [""] * (4 - len(option))
                     less_option_num += 1
@@ -64,7 +62,6 @@ def load_exp_race_data(exp_race_file):
                 all_examples["question"].append(question)
                 all_examples["answer"].append(answer)
                 all_examples["options"].append(option)
-                all_examples["evidence"].append(evidence)
                 # if len(all_examples["example_id"]) > 10:
                 #     return all_examples
     print(f"total {len(all_examples['example_id'])} less {less_option_num}")
