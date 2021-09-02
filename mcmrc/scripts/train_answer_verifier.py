@@ -465,7 +465,7 @@ def main():
                 feature_func_for_evidence_generating=pprepare_features_for_generating_optionwise_evidence)
 
             metrics = {**results, **fulleval_results}
-            output_eval_file = os.path.join(training_args.output_dir, f"{split}_results.txt")
+            output_eval_file = os.path.join(training_args.output_dir, f"{split}_extensive_results.txt")
             with open(output_eval_file, "a+") as writer:
                 logger.info("***** Extensive Eval results *****")
                 for key, value in sorted(metrics.items()):
@@ -508,14 +508,14 @@ def main():
                     metrics[f"merge_{ratio}_total_count"] = total_count
                     metrics[f"merge_{ratio}_skip_count"] = skip_count
 
-            output_eval_file = os.path.join(training_args.output_dir, f"{split}_results.txt")
+            output_eval_file = os.path.join(training_args.output_dir, f"{split}_intensive_results.txt")
             with open(output_eval_file, "a+") as writer:
                 logger.info(f"***** Eval {split} results *****")
                 for key, value in sorted(metrics.items()):
                     logger.info(f"  {key} = {value}")
                     writer.write(f"{key} = {value}\n")
 
-        output_evidence_file = os.path.join(training_args.output_dir, f"extensive_evidence.json")
+        output_evidence_file = os.path.join(training_args.output_dir, f"all_extensive_evidence.json")
         with open(output_evidence_file, "w") as f:
             json.dump(extensive_evidence_sentences, f)
 
