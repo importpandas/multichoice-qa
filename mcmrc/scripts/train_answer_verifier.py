@@ -333,6 +333,9 @@ def main():
         data_collator=DataCollatorForMultipleChoice(tokenizer=tokenizer),
         compute_metrics=compute_mc_metrics,
     )
+    if training_args.train_extensive_evidence_selector and training_args.train_intensive_evidence_selector:
+        extensive_trainer.checkpoint_dir = os.path.join(training_args.output_dir, "extensive_evidence_selector")
+        intensive_trainer.checkpoint_dir = os.path.join(training_args.output_dir, "intensive_evidence_selector")
 
     mc_trainer = Trainer(
         model=evidence_reader,
