@@ -147,6 +147,12 @@ class AllTrainingArguments(TrainingArguments):
     eval_on_exp_race: bool = field(
         default=False,
         metadata={"help": "Whether to evaluate intensive evidence reader on Exp RACE dev set."})
+    num_train_selector_epochs: float = field(
+        default=3.0,
+        metadata={"help": "Total number of training epochs of evidence selector to perform."})
+    num_train_verifier_epochs: float = field(
+        default=3.0,
+        metadata={"help": "Total number of training epochs to perform."})
 
 
 def main():
@@ -306,6 +312,7 @@ def main():
         tokenizer=tokenizer,
         data_args=data_args)
 
+    training_args.num_train_epochs = training_args.num_train_selector_epochs
     extensive_trainer = Trainer(
         model=extensive_evidence_selector,
         args=training_args,
@@ -316,6 +323,7 @@ def main():
         compute_metrics=compute_mc_metrics,
     )
 
+    training_args.num_train_epochs = training_args.num_train_verifier_epochs
     intensive_trainer = Trainer(
         model=intensive_evidence_selector,
         args=training_args,
