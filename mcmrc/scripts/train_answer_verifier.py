@@ -367,6 +367,7 @@ def main():
         ) for k in datasets.keys() if k != "train" or training_args.train_extensive_evidence_selector}
 
     if training_args.train_extensive_evidence_selector:
+        logger.info("**** Train Extensive Evidence Selector ****")
         extensive_trainer.train_dataset = train_extensive_evidence_selector_datasets["train"]
         extensive_trainer.eval_dataset = train_extensive_evidence_selector_datasets["validation"]
         train_result = extensive_trainer.train()
@@ -380,7 +381,7 @@ def main():
                 writer.write(f"{key} = {value}\n")
 
     if training_args.eval_extensive_evidence_selector:
-
+        logger.info("**** Evaluate Extensive Evidence Selector ****")
         for split in ["validation", "test"]:
             logger.info(f"*** Evaluate {split} set ***")
             results = extensive_trainer.evaluate(train_extensive_evidence_selector_datasets[split]).metrics
@@ -414,6 +415,7 @@ def main():
 
     # prepare features for intensive evidence selector
     if training_args.train_intensive_evidence_selector or training_args.eval_intensive_evidence_selector:
+        logger.info("**** preparing features for intensive evidence selector ****")
         train_intensive_evidence_selector_datasets = {}
         extensive_evidence_sentences = {}
         for split in datasets.keys():
@@ -470,10 +472,13 @@ def main():
             extensive_evidence_sentences['exp'] = evidence_sentences
 
     if torch.cuda.is_available():
+        logger.info("**** release evidence selector ****")
+        del extensive_trainer
         del extensive_evidence_selector
         torch.cuda.empty_cache()
 
     if training_args.train_intensive_evidence_selector:
+        logger.info("**** Train intensive evidence selector ****")
         intensive_trainer.train_dataset = train_intensive_evidence_selector_datasets["train"]
         intensive_trainer.eval_dataset = train_intensive_evidence_selector_datasets["validation"]
 
