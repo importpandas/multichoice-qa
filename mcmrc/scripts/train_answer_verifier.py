@@ -22,6 +22,7 @@ import sys
 import logging
 from pathlib import Path
 import datasets
+import torch.cuda
 from datasets import load_dataset, ReadInstruction, Dataset
 from functools import partial
 from objprint import add_objprint
@@ -373,9 +374,33 @@ def main():
         output_train_file = os.path.join(training_args.output_dir, "train_results.txt")
         with open(output_train_file, "w") as writer:
             logger.info("***** Extensive Train results *****")
+            writer.write("***** Extensive Train results *****")
             for key, value in sorted(train_result.metrics.items()):
                 logger.info(f"  {key} = {value}")
                 writer.write(f"{key} = {value}\n")
+
+    if training_args.eval_extensive_evidence_selector:
+
+        for split in ["validation", "test"]:
+            logger.info(f"*** Evaluate {split} set ***")
+            results = extensive_trainer.evaluate(train_extensive_evidence_selector_datasets[split]).metrics
+            fulleval_results, all_evidence_sentences = extensive_trainer.evaluate_extensive_selector_with_explicit_reader(
+                evidence_reader=evidence_reader,
+                eval_dataset=datasets[split],
+                feature_func_for_evidence_reading=pprepare_features_for_reading_optionwise_evidence,
+                feature_func_for_evidence_generating=pprepare_features_for_generating_optionwise_evidence)
+
+            metrics = {**results, **fulleval_results}
+            output_eval_file = os.path.join(training_args.output_dir, f"{split}_extensive_results.txt")
+            with open(output_eval_file, "a+") as writer:
+                logger.info("***** Extensive Eval results *****")
+                for key, value in sorted(metrics.items()):
+                    logger.info(f"  {key} = {value}")
+                    writer.write(f"{key} = {value}\n")
+
+            output_evidence_file = os.path.join(training_args.output_dir, f"{split}_evidence.json")
+            with open(output_evidence_file, "w") as f:
+                json.dump(all_evidence_sentences, f)
 
     # generate extensive evidence logits
     if training_args.train_intensive_evidence_selector:
@@ -444,15 +469,20 @@ def main():
             train_intensive_evidence_selector_datasets['exp'] = processed_exp_dataset
             extensive_evidence_sentences['exp'] = evidence_sentences
 
+    if torch.cuda.is_available():
+        del extensive_evidence_selector
+        torch.cuda.empty_cache()
+
     if training_args.train_intensive_evidence_selector:
         intensive_trainer.train_dataset = train_intensive_evidence_selector_datasets["train"]
         intensive_trainer.eval_dataset = train_intensive_evidence_selector_datasets["validation"]
 
         train_result = intensive_trainer.train()
 
-        output_train_file = os.path.join(training_args.output_dir, "train_results.txt")
+        output_train_file = os.path.join(training_args.output_dir, "intensive_train_results.txt")
         with open(output_train_file, "a+") as writer:
             logger.info("***** Intensive Train results *****")
+            writer.write("***** Intensive Train results *****")
             for key, value in sorted(train_result.metrics.items()):
                 logger.info(f"  {key} = {value}")
                 writer.write(f"{key} = {value}\n")
@@ -463,29 +493,6 @@ def main():
     # --load_best_model_at_end \
     # --metric_for_best_model accuracy \
     # --evaluation_strategy steps \
-
-    if training_args.eval_extensive_evidence_selector:
-
-        for split in ["validation", "test"]:
-            logger.info(f"*** Evaluate {split} set ***")
-            results = extensive_trainer.evaluate(train_extensive_evidence_selector_datasets[split]).metrics
-            fulleval_results, all_evidence_sentences = extensive_trainer.evaluate_extensive_selector_with_explicit_reader(
-                evidence_reader=evidence_reader,
-                eval_dataset=datasets[split],
-                feature_func_for_evidence_reading=pprepare_features_for_reading_optionwise_evidence,
-                feature_func_for_evidence_generating=pprepare_features_for_generating_optionwise_evidence)
-
-            metrics = {**results, **fulleval_results}
-            output_eval_file = os.path.join(training_args.output_dir, f"{split}_extensive_results.txt")
-            with open(output_eval_file, "a+") as writer:
-                logger.info("***** Extensive Eval results *****")
-                for key, value in sorted(metrics.items()):
-                    logger.info(f"  {key} = {value}")
-                    writer.write(f"{key} = {value}\n")
-
-            output_evidence_file = os.path.join(training_args.output_dir, f"{split}_evidence.json")
-            with open(output_evidence_file, "w") as f:
-                json.dump(all_evidence_sentences, f)
 
     if training_args.eval_intensive_evidence_selector:
 
