@@ -166,7 +166,7 @@ def main():
                   'test': data_args.test_file if data_args.test_file is not None else None}
 
     datasets = load_dataset(data_args.dataload_script, data_args.dataload_split,
-                            data_files=data_files if data_files['train'] is not None else None,
+                            data_files=data_files if data_files['validation'] is not None else None,
                             data_dir=data_args.data_dir)
     # datasets = load_dataset(data_args.dataload_script, data_args.dataload_split,
     #                         data_files=data_files if data_files['train'] is not None else None,
