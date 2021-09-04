@@ -438,8 +438,7 @@ def main():
                                       intensive_dataset['evidence_sentence'],
                                       intensive_dataset['evidence_logit'])}
             train_intensive_evidence_selector_datasets[split] = intensive_dataset.remove_columns(["evidence_sentence", "evidence_logit"])
-            if split != "train":
-                extensive_evidence_sentences[split] = evidence_sentences
+            extensive_evidence_sentences[split] = evidence_sentences
 
         if training_args.eval_on_exp_race:
             multiple_choice_datasets['exp'] = exp_dataset.map(
@@ -470,6 +469,10 @@ def main():
             processed_exp_dataset = processed_exp_dataset.remove_columns(["evidence_sentence", "evidence_logit"])
             train_intensive_evidence_selector_datasets['exp'] = processed_exp_dataset
             extensive_evidence_sentences['exp'] = evidence_sentences
+
+        output_evidence_file = os.path.join(training_args.output_dir, f"all_extensive_evidence.json")
+        with open(output_evidence_file, "w") as f:
+            json.dump(extensive_evidence_sentences, f)
 
     if torch.cuda.is_available():
         logger.info("**** release evidence selector ****")
@@ -537,10 +540,6 @@ def main():
                 for key, value in sorted(metrics.items()):
                     logger.info(f"  {key} = {value}")
                     writer.write(f"{key} = {value}\n")
-
-        output_evidence_file = os.path.join(training_args.output_dir, f"all_extensive_evidence.json")
-        with open(output_evidence_file, "w") as f:
-            json.dump(extensive_evidence_sentences, f)
 
 
 
