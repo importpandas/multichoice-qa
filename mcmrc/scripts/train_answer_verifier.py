@@ -413,6 +413,10 @@ def main():
             k: extensive_trainer.evidence_generating(v, pprepare_features_for_generating_optionwise_evidence)
             for k, v in datasets.items() if k != "train"}
 
+    output_evidence_logits_file = os.path.join(training_args.output_dir, f"extensive_evidence_logits.json")
+    with open(output_evidence_logits_file, "w") as f:
+        json.dump(extensive_evidence_logits, f)
+
     # prepare features for intensive evidence selector
     if training_args.train_intensive_evidence_selector or training_args.eval_intensive_evidence_selector:
         logger.info("**** preparing features for intensive evidence selector ****")
