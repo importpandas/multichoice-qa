@@ -28,6 +28,7 @@ from functools import partial
 from pathlib import Path
 from objprint import add_objprint
 from dataclasses import dataclass, field
+from utils.tfidf import compute_similarity_with_tfidf
 
 import transformers
 from transformers import (
@@ -75,9 +76,9 @@ class DataTrainingArguments(BasicDataTrainingArguments):
     train_with_data_aug:  bool = field(
         default=False, metadata={"help": "whether to train mc model with data augmentation"}
     )
-    pseudo_label_path: str = field(
+    evidence_logits_path: str = field(
         default="",
-        metadata={"help": "Path to pseudo evidence label"}
+        metadata={"help": "Path to evidence label"}
     )
     data_aug_ratio: float = field(
         default=0.5,
@@ -88,22 +89,21 @@ class DataTrainingArguments(BasicDataTrainingArguments):
         metadata={"help": "the length of evidence appended to original passage"},
     )
     aug_type: str = field(
-        default="option",
-        metadata={"help": "data augmentation with disturbed passage or disturbed option"},
+        default="label",
+        metadata={"help": "'label' or 'strongest' evidence"},
     )
     aug_evidence_insert_pos: str = field(
         default="random",
         metadata={"help": "the evidence insert position of passage"},
     )
-    filter_wrong_example: bool = field(
-        default=False,
-        metadata={"help": "Whether to filter examples wrongly predicted by MRC models"},
+    tf_idf_lower_bound: float = field(
+        default=0.3,
+        metadata={"help": "the lower bound of tf-idf similarity used to filter the examples"},
     )
-    filter_short_option: bool = field(
-        default=False,
-        metadata={"help": "Whether to filter examples whose golden answer is too short"},
+    tf_idf_upper_bound: float = field(
+        default=0.8,
+        metadata={"help": "the upper bound of tf-idf similarity used to filter the examples"},
     )
-
 
 
 def main():
@@ -220,9 +220,18 @@ def main():
         column_names = datasets["validation"].column_names
 
     if data_args.train_with_data_aug:
+        similarity_dict, examples_dict, qualified_rate = \
+            compute_similarity_with_tfidf(data_args.dataset, data_args.train_file, tokenizer,
+                                          lower_bound=data_args.tf_idf_lower_bound,
+                                          upper_bound=data_args.tf_idf_upper_bound)
+        data_args.data_aug_ratio = data_args.data_aug_ratio / (qualified_rate + 0.01)
         pprepare_features = partial(prepare_features, tokenizer=tokenizer, data_args=data_args)
         pprepare_features_with_data_aug = partial(prepare_features_with_data_aug, tokenizer=tokenizer, data_args=data_args,
-                                    pseudo_label_path=data_args.pseudo_label_path)
+                                                  evidence_logits_path=data_args.evidence_logits_path,
+                                                  evidence_len=data_args.aug_evidence_len,
+                                                  similarity_dict=similarity_dict,
+                                                  examples_dict=examples_dict
+                                                  )
         tokenized_train_dataset = datasets['train'].map(
             pprepare_features_with_data_aug,
             batched=True,

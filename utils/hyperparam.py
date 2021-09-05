@@ -78,8 +78,6 @@ def hyperparam_path_for_baseline(model_args, data_args, training_args):
             exp_name += f'__aug_evidence_len_{data_args.aug_evidence_len}'
             exp_name += f'__aug_type_{data_args.aug_type}'
             exp_name += f'__aug_evi_insert_pos_{data_args.aug_evidence_insert_pos}'
-            exp_name += f'__filter_wrong_example_{data_args.filter_wrong_example}'
-            exp_name += f'__filter_short_option_{data_args.filter_short_option}'
     except:
         exp_name = hyperparam_base(model_args, data_args, training_args)
 
