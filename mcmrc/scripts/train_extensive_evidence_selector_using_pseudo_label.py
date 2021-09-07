@@ -442,14 +442,28 @@ def main():
     # prepare features for intensive evidence selector
     if training_args.train_intensive_evidence_selector or training_args.eval_intensive_evidence_selector \
             or training_args.eval_answer_verifier:
-        train_intensive_evidence_selector_datasets = {k: datasets[k].map(
-            partial(pprepare_features_for_intensive_evidence_selector,
-                    evidence_logits=extensive_evidence_logits[k]),
-            batched=True,
-            num_proc=data_args.preprocessing_num_workers,
-            remove_columns=column_names,
-            load_from_cache_file=not data_args.overwrite_cache,
-        ) for k in datasets.keys() if k != "train" or training_args.train_intensive_evidence_selector}
+        train_intensive_evidence_selector_datasets = {}
+        extensive_evidence_sentences = {}
+        for split in datasets.keys():
+            if not training_args.train_intensive_evidence_selector and split == 'train':
+                continue
+            intensive_dataset = datasets[split].map(
+                partial(pprepare_features_for_intensive_evidence_selector,
+                        evidence_logits=extensive_evidence_logits[split]),
+                batched=True,
+                num_proc=data_args.preprocessing_num_workers,
+                remove_columns=column_names,
+                load_from_cache_file=not data_args.overwrite_cache,
+            )
+
+            evidence_sentences = {eid: [[(logit, sent) for sent, logit in zip(option_sents, option_logits)]
+                                        for option_sents, option_logits in zip(evidence_sent, evidence_logit)]
+                                        for eid, evidence_sent, evidence_logit in
+                                  zip(intensive_dataset['example_ids'],
+                                      intensive_dataset['evidence_sentence'],
+                                      intensive_dataset['evidence_logit'])}
+            train_intensive_evidence_selector_datasets[split] = intensive_dataset.remove_columns(["evidence_sentence", "evidence_logit"])
+            extensive_evidence_sentences[split] = evidence_sentences
 
     # prepare features for answer verifier
     if training_args.train_answer_verifier or training_args.eval_answer_verifier:
