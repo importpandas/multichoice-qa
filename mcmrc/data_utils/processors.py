@@ -74,6 +74,33 @@ def load_exp_race_data(exp_race_file):
     return all_examples
 
 
+def load_adv_race_data(adv_race_file):
+    print(adv_race_file)
+    all_examples = dict.fromkeys(["example_id", "article", 'article_sent_start', "question", "answer", "options"], None)
+    for k in all_examples.keys():
+        all_examples[k] = []
+    less_option_num = 0
+    with open(adv_race_file) as f:
+        race_data = json.load(f)
+        for example_id, data in race_data.items():
+            question = data["question"]
+            answer = chr(data["label"] + ord("A"))
+            option = data["options"]
+            article = process_text(data["context"])
+            doc = nlp(article)
+            article_sent_start = [sent.start_char for sent in doc.sents]
+            all_examples["example_id"].append(example_id)
+            all_examples["article"].append(article)
+            all_examples["article_sent_start"].append(article_sent_start)
+            all_examples["question"].append(question)
+            all_examples["answer"].append(answer)
+            all_examples["options"].append(option)
+            # if len(all_examples["example_id"]) > 10:
+            #     return all_examples
+    print(f"total {len(all_examples['example_id'])} less {less_option_num}")
+    return all_examples
+
+
 def process_text(inputs, remove_space=True, lower=False):
     """preprocess data by removing extra space and normalize data."""
     outputs = inputs

@@ -53,7 +53,8 @@ from mcmrc.data_utils.processors import (
     prepare_features_for_generating_optionwise_evidence, prepare_features_for_reading_optionwise_evidence,
     prepare_features_for_intensive_evidence_selector,
     prepare_features,
-    load_exp_race_data
+    load_exp_race_data,
+    load_adv_race_data
 )
 
 logger = logging.getLogger(__name__)
@@ -128,6 +129,10 @@ class DataTrainingArguments(BasicDataTrainingArguments):
         default=None,
         metadata={"help": "An optional input evaluation data file to evaluate model on exp_race_file"},
     )
+    adv_race_path: Optional[str] = field(
+        default=None,
+        metadata={"help": "An optional input evaluation data file path to evaluate model on AdvRACE"},
+    )
 
 
 @add_objprint(color=False)
@@ -148,6 +153,9 @@ class AllTrainingArguments(TrainingArguments):
     eval_on_exp_race: bool = field(
         default=False,
         metadata={"help": "Whether to evaluate intensive evidence reader on Exp RACE dev set."})
+    eval_on_adv_race: bool = field(
+        default=False,
+        metadata={"help": "Whether to evaluate intensive evidence reader on AdvRACE set."})
     num_train_selector_epochs: float = field(
         default=3.0,
         metadata={"help": "Total number of training epochs of evidence selector to perform."})
@@ -230,6 +238,12 @@ def main():
                             data_dir=data_args.data_dir)
     if training_args.eval_on_exp_race:
         exp_dataset = Dataset.from_dict(load_exp_race_data(data_args.exp_race_file))
+
+    if training_args.eval_on_adv_race:
+        adv_datasets = {}
+        for subset in os.listdir(data_args.adv_race_path):
+            adv_datasets[subset] = Dataset.from_dict(load_adv_race_data(os.path.join(data_args.adv_race_path, subset, "test_dis.json")))
+
 
 
     # Load pretrained model and tokenizer
@@ -422,6 +436,31 @@ def main():
         logger.info("**** preparing features for intensive evidence selector ****")
         train_intensive_evidence_selector_datasets = {}
         extensive_evidence_sentences = {}
+
+        if training_args.eval_on_exp_race:
+            multiple_choice_datasets['exp'] = exp_dataset.map(
+                pprepare_features_for_multiple_choice,
+                batched=True,
+                num_proc=data_args.preprocessing_num_workers,
+                remove_columns=column_names,
+                load_from_cache_file=not data_args.overwrite_cache,
+            )
+
+            extensive_evidence_logits['exp'] = extensive_trainer.evidence_generating(
+                exp_dataset, pprepare_features_for_generating_optionwise_evidence)
+
+        if training_args.eval_on_adv_race:
+            for adv_split, adv_dataset in adv_datasets.items():
+                multiple_choice_datasets[adv_split] = adv_dataset.map(
+                    pprepare_features_for_multiple_choice,
+                    batched=True,
+                    num_proc=data_args.preprocessing_num_workers,
+                    remove_columns=column_names,
+                    load_from_cache_file=not data_args.overwrite_cache,
+                )
+                extensive_evidence_logits[adv_split] = extensive_trainer.evidence_generating(
+                    adv_dataset, pprepare_features_for_generating_optionwise_evidence)
+
         for split in datasets.keys():
             if not training_args.train_intensive_evidence_selector and split == 'train':
                 continue
@@ -443,36 +482,6 @@ def main():
                                       intensive_dataset['evidence_logit'])}
             train_intensive_evidence_selector_datasets[split] = intensive_dataset.remove_columns(["evidence_sentence", "evidence_logit"])
             extensive_evidence_sentences[split] = evidence_sentences
-
-        if training_args.eval_on_exp_race:
-            multiple_choice_datasets['exp'] = exp_dataset.map(
-                pprepare_features_for_multiple_choice,
-                batched=True,
-                num_proc=data_args.preprocessing_num_workers,
-                remove_columns=column_names,
-                load_from_cache_file=not data_args.overwrite_cache,
-            )
-
-            exp_extensive_evidence_logits = extensive_trainer.evidence_generating(
-                exp_dataset, pprepare_features_for_generating_optionwise_evidence)
-
-            processed_exp_dataset = exp_dataset.map(
-                partial(pprepare_features_for_intensive_evidence_selector,
-                        evidence_logits=exp_extensive_evidence_logits),
-                batched=True,
-                num_proc=data_args.preprocessing_num_workers,
-                remove_columns=column_names,
-                load_from_cache_file=not data_args.overwrite_cache,
-            )
-            evidence_sentences = {eid: [[(logit, sent) for sent, logit in zip(option_sents, option_logits)]
-                                        for option_sents, option_logits in zip(evidence_sent, evidence_logit)]
-                                        for eid, evidence_sent, evidence_logit in
-                                  zip(processed_exp_dataset['example_ids'],
-                                      processed_exp_dataset['evidence_sentence'],
-                                      processed_exp_dataset['evidence_logit'])}
-            processed_exp_dataset = processed_exp_dataset.remove_columns(["evidence_sentence", "evidence_logit"])
-            train_intensive_evidence_selector_datasets['exp'] = processed_exp_dataset
-            extensive_evidence_sentences['exp'] = evidence_sentences
 
         output_evidence_file = os.path.join(training_args.output_dir, f"all_extensive_evidence.json")
         with open(output_evidence_file, "w") as f:
@@ -512,6 +521,9 @@ def main():
         if training_args.eval_on_exp_race and data_args.dataset == "race":
             sets.append("exp")
 
+        if training_args.eval_on_adv_race and data_args.dataset == "race":
+            sets += ['charSwap', 'AddSent', 'DE', 'DG', 'Orig']
+
         for split in sets:
             logger.info(f"*** Evaluate {split} set ***")
             metrics, predictions = intensive_trainer.evaluate_intensive_selector_with_explicit_reader(
@@ -544,8 +556,6 @@ def main():
                 for key, value in sorted(metrics.items()):
                     logger.info(f"  {key} = {value}")
                     writer.write(f"{key} = {value}\n")
-
-
 
 
 
