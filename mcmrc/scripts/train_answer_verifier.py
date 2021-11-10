@@ -461,7 +461,7 @@ def main():
                 extensive_evidence_logits[adv_split] = extensive_trainer.evidence_generating(
                     adv_dataset, pprepare_features_for_generating_optionwise_evidence)
 
-        for split in datasets.keys():
+        for split in multiple_choice_datasets.keys():
             if not training_args.train_intensive_evidence_selector and split == 'train':
                 continue
 
