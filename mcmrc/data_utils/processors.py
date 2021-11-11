@@ -68,7 +68,7 @@ def load_exp_race_data(exp_race_file):
                 all_examples["question"].append(question)
                 all_examples["answer"].append(answer)
                 all_examples["options"].append(option)
-                # if len(all_examples["example_id"]) > 10:
+                # if len(all_examples["example_id"]) > 2:
                 #     return all_examples
     print(f"total {len(all_examples['example_id'])} less {less_option_num}")
     return all_examples
@@ -95,7 +95,7 @@ def load_adv_race_data(adv_race_file):
             all_examples["question"].append(question)
             all_examples["answer"].append(answer)
             all_examples["options"].append(option)
-            # if len(all_examples["example_id"]) > 10:
+            # if len(all_examples["example_id"]) > 2:
             #     return all_examples
     print(f"total {len(all_examples['example_id'])} less {less_option_num}")
     return all_examples

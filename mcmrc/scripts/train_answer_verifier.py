@@ -230,19 +230,18 @@ def main():
     # datasets = load_dataset(data_args.dataload_script, data_args.dataload_split,
     #                         data_files=data_files if data_files['train'] is not None else None,
     #                         data_dir=data_args.data_dir,
-    #                         split={'train': ReadInstruction('train', from_=0, to=5, unit='abs'),
-    #                                'validation': ReadInstruction('validation', from_=0, to=5, unit='abs'),
-    #                                'test': ReadInstruction('test', from_=0, to=5, unit='abs')})
+    #                         split={'train': ReadInstruction('train', from_=0, to=2, unit='abs'),
+    #                                'validation': ReadInstruction('validation', from_=0, to=2, unit='abs'),
+    #                                'test': ReadInstruction('test', from_=0, to=2, unit='abs')})
     datasets = load_dataset(data_args.dataload_script, data_args.dataload_split,
                             data_files=data_files if data_files['train'] is not None else None,
                             data_dir=data_args.data_dir)
     if training_args.eval_on_exp_race:
-        exp_dataset = Dataset.from_dict(load_exp_race_data(data_args.exp_race_file))
+        datasets['exp'] = Dataset.from_dict(load_exp_race_data(data_args.exp_race_file))
 
     if training_args.eval_on_adv_race:
-        adv_datasets = {}
         for subset in os.listdir(data_args.adv_race_path):
-            adv_datasets[subset] = Dataset.from_dict(load_adv_race_data(os.path.join(data_args.adv_race_path, subset, "test_dis.json")))
+            datasets[subset] = Dataset.from_dict(load_adv_race_data(os.path.join(data_args.adv_race_path, subset, "test_dis.json")))
 
 
 
@@ -437,31 +436,31 @@ def main():
         train_intensive_evidence_selector_datasets = {}
         extensive_evidence_sentences = {}
 
-        if training_args.eval_on_exp_race:
-            multiple_choice_datasets['exp'] = exp_dataset.map(
-                pprepare_features_for_multiple_choice,
-                batched=True,
-                num_proc=data_args.preprocessing_num_workers,
-                remove_columns=column_names,
-                load_from_cache_file=not data_args.overwrite_cache,
-            )
+        # if training_args.eval_on_exp_race:
+        #     multiple_choice_datasets['exp'] = exp_dataset.map(
+        #         pprepare_features_for_multiple_choice,
+        #         batched=True,
+        #         num_proc=data_args.preprocessing_num_workers,
+        #         remove_columns=column_names,
+        #         load_from_cache_file=not data_args.overwrite_cache,
+        #     )
+        #
+        #     extensive_evidence_logits['exp'] = extensive_trainer.evidence_generating(
+        #         exp_dataset, pprepare_features_for_generating_optionwise_evidence)
+        #
+        # if training_args.eval_on_adv_race:
+        #     for adv_split, adv_dataset in adv_datasets.items():
+        #         multiple_choice_datasets[adv_split] = adv_dataset.map(
+        #             pprepare_features_for_multiple_choice,
+        #             batched=True,
+        #             num_proc=data_args.preprocessing_num_workers,
+        #             remove_columns=column_names,
+        #             load_from_cache_file=not data_args.overwrite_cache,
+        #         )
+        #         extensive_evidence_logits[adv_split] = extensive_trainer.evidence_generating(
+        #             adv_dataset, pprepare_features_for_generating_optionwise_evidence)
 
-            extensive_evidence_logits['exp'] = extensive_trainer.evidence_generating(
-                exp_dataset, pprepare_features_for_generating_optionwise_evidence)
-
-        if training_args.eval_on_adv_race:
-            for adv_split, adv_dataset in adv_datasets.items():
-                multiple_choice_datasets[adv_split] = adv_dataset.map(
-                    pprepare_features_for_multiple_choice,
-                    batched=True,
-                    num_proc=data_args.preprocessing_num_workers,
-                    remove_columns=column_names,
-                    load_from_cache_file=not data_args.overwrite_cache,
-                )
-                extensive_evidence_logits[adv_split] = extensive_trainer.evidence_generating(
-                    adv_dataset, pprepare_features_for_generating_optionwise_evidence)
-
-        for split in multiple_choice_datasets.keys():
+        for split in datasets.keys():
             if not training_args.train_intensive_evidence_selector and split == 'train':
                 continue
 
