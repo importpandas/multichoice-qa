@@ -63,7 +63,6 @@ def main():
     else:
         model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
-
     # Setup logging
     logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
@@ -131,8 +130,8 @@ def main():
 
     column_names = datasets["train"].column_names
 
-
-    pprepare_features_for_generate_pseudo_label = partial(prepare_features_for_generate_pseudo_label, tokenizer=tokenizer, data_args=data_args)
+    pprepare_features_for_generate_pseudo_label = partial(prepare_features_for_generate_pseudo_label,
+                                                          tokenizer=tokenizer, data_args=data_args)
     tokenized_datasets = datasets.map(
         pprepare_features_for_generate_pseudo_label,
         batched=True,
@@ -180,7 +179,6 @@ def main():
             example_ids = batch['example_ids']
             sent_bounds = batch['sent_bound_token']
 
-
             for i, one_example_sent_bounds in enumerate(sent_bounds):
 
                 if example_ids[i] not in pseudo_label_split.keys():
@@ -200,7 +198,6 @@ def main():
                 one_example_label = batch['labels'][i]
                 sent_num = one_example_sent_bounds.size()[0]
 
-
                 for j in range(0, sent_num, training_args.eval_batch_size):
                     batch_start = j
                     batch_end = j + training_args.eval_batch_size if j < sent_num - training_args.eval_batch_size else sent_num
@@ -211,10 +208,10 @@ def main():
                                                                                             -1).clone().to(device)
 
                     pos_matrix = torch.arange(batched_attention_mask.size()[-1], device=device).view(1, 1, -1)
-                    if_in_sent = torch.logical_and(batched_sent_bound[:,:,0].unsqueeze(-1) <= pos_matrix,
-                                                   pos_matrix <= batched_sent_bound[:,:,1].unsqueeze(-1))
+                    if_in_sent = torch.logical_and(batched_sent_bound[:, :, 0].unsqueeze(-1) <= pos_matrix,
+                                                   pos_matrix <= batched_sent_bound[:, :, 1].unsqueeze(-1))
 
-                    batched_attention_mask = torch.where(if_in_sent, torch.tensor((0), device=device), batched_attention_mask)
+                    batched_attention_mask = torch.where(if_in_sent, torch.tensor(0, device=device), batched_attention_mask)
                     batched_input_ids = one_example_input_ids.expand(batch_end - batch_start, -1, -1).contiguous()
                     batched_token_type_ids = one_example_token_type_ids.expand(batch_end - batch_start, -1, -1).contiguous()
 

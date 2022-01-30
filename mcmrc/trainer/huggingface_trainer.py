@@ -7,6 +7,7 @@ from torch.utils.data.sampler import SequentialSampler
 
 from transformers.trainer import Trainer
 from transformers.trainer_utils import speed_metrics
+import logging
 
 from ..data_utils.collator import *
 

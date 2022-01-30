@@ -28,19 +28,17 @@ from functools import partial
 from pathlib import Path
 from objprint import add_objprint
 from dataclasses import dataclass, field
-from utils.tfidf import compute_similarity_with_tfidf
 
 import transformers
 from transformers import (
     AutoConfig,
     AutoTokenizer,
+    AutoModelForMultipleChoice,
     HfArgumentParser,
     TrainingArguments,
     default_data_collator,
     set_seed,
 )
-
-from ..model.auto_model import AutoModelForMultipleChoice
 
 from utils.utils_distributed_training import is_main_process
 from utils.hyperparam import hyperparam_path_for_baseline
@@ -59,8 +57,12 @@ class DataTrainingArguments(BasicDataTrainingArguments):
     """
     Arguments pertaining to what data we are going to input our model for training and eval.
     """
+    debug_mode:  bool = field(
+        default=False, metadata={"help": "whether to load a subset of data for debug"}
+    )
     split_train_dataset:  bool = field(
-        default=False, metadata={"help": "whether to split part of training dataset for testing"}
+        default=False, metadata={"help": "whether to split training dataset "
+                                         "like cross validation for evidence generating"}
     )
     n_fold: int = field(
         default=5,
@@ -73,36 +75,9 @@ class DataTrainingArguments(BasicDataTrainingArguments):
     output_prediction_file:  bool = field(
         default=True, metadata={"help": "whether to output model prediction"}
     )
-    train_with_data_aug:  bool = field(
-        default=False, metadata={"help": "whether to train mc model with data augmentation"}
-    )
     evidence_logits_path: str = field(
         default="",
         metadata={"help": "Path to evidence label"}
-    )
-    data_aug_ratio: float = field(
-        default=0.5,
-        metadata={"help": "the ratio of augmented examples compared to original examples"},
-    )
-    aug_evidence_len: int = field(
-        default=2,
-        metadata={"help": "the length of evidence appended to original passage"},
-    )
-    aug_type: str = field(
-        default="label",
-        metadata={"help": "'label' or 'strongest' evidence"},
-    )
-    aug_evidence_insert_pos: str = field(
-        default="random",
-        metadata={"help": "the evidence insert position of passage"},
-    )
-    tf_idf_lower_bound: float = field(
-        default=0.3,
-        metadata={"help": "the lower bound of tf-idf similarity used to filter the examples"},
-    )
-    tf_idf_upper_bound: float = field(
-        default=0.8,
-        metadata={"help": "the upper bound of tf-idf similarity used to filter the examples"},
     )
 
 
@@ -155,7 +130,7 @@ def main():
     if data_args.dataset not in ['race', 'dream']:
         raise ValueError("Dataset should be race or dream.")
     else:
-        from mcmrc.data_utils.processors import prepare_features, prepare_features_with_data_aug
+        from mcmrc.data_utils.processors import prepare_features
 
     # In distributed training, the load_dataset function guarantee that only one local process can concurrently
     # download the dataset.
@@ -165,15 +140,17 @@ def main():
                   'validation': data_args.validation_file if data_args.validation_file is not None else None,
                   'test': data_args.test_file if data_args.test_file is not None else None}
 
-    datasets = load_dataset(data_args.dataload_script, data_args.dataload_split,
-                            data_files=data_files if data_files['validation'] is not None else None,
-                            data_dir=data_args.data_dir)
-    # datasets = load_dataset(data_args.dataload_script, data_args.dataload_split,
-    #                         data_files=data_files if data_files['train'] is not None else None,
-    #                         data_dir=data_args.data_dir,
-    #                         split={'train': ReadInstruction('train', from_=0, to=5, unit='abs'),
-    #                                'validation': ReadInstruction('validation', from_=0, to=5, unit='abs'),
-    #                                'test': ReadInstruction('test', from_=0, to=5, unit='abs')})
+    if data_args.debug_mode:
+        datasets = load_dataset(data_args.dataload_script, data_args.dataload_split,
+                                data_files=data_files if data_files['train'] is not None else None,
+                                data_dir=data_args.data_dir,
+                                split={'train': ReadInstruction('train', from_=0, to=5, unit='abs'),
+                                       'validation': ReadInstruction('validation', from_=0, to=5, unit='abs'),
+                                       'test': ReadInstruction('test', from_=0, to=5, unit='abs')})
+    else:
+        datasets = load_dataset(data_args.dataload_script, data_args.dataload_split,
+                                data_files=data_files if data_files['validation'] is not None else None,
+                                data_dir=data_args.data_dir)
 
     if data_args.split_train_dataset:
         holdout_set_start = int(len(datasets['train']) / data_args.n_fold * data_args.holdout_set)
@@ -219,52 +196,14 @@ def main():
     else:
         column_names = datasets["validation"].column_names
 
-    if data_args.train_with_data_aug:
-        similarity_dict, examples_dict, qualified_rate = \
-            compute_similarity_with_tfidf(data_args.dataset, data_args.train_file, tokenizer,
-                                          lower_bound=data_args.tf_idf_lower_bound,
-                                          upper_bound=data_args.tf_idf_upper_bound)
-        data_args.data_aug_ratio = data_args.data_aug_ratio / (qualified_rate + 0.01)
-        pprepare_features = partial(prepare_features, tokenizer=tokenizer, data_args=data_args)
-        pprepare_features_with_data_aug = partial(prepare_features_with_data_aug, tokenizer=tokenizer, data_args=data_args,
-                                                  evidence_logits_path=data_args.evidence_logits_path,
-                                                  evidence_len=data_args.aug_evidence_len,
-                                                  similarity_dict=similarity_dict,
-                                                  examples_dict=examples_dict
-                                                  )
-        tokenized_train_dataset = datasets['train'].map(
-            pprepare_features_with_data_aug,
-            batched=True,
-            num_proc=data_args.preprocessing_num_workers,
-            remove_columns=column_names,
-            load_from_cache_file=not data_args.overwrite_cache,
-        )
-        shuffled_train_set = tokenized_train_dataset.shuffle(seed=training_args.seed)
-
-        tokenized_datasets = {k: datasets[k].map(
-            pprepare_features,
-            batched=True,
-            num_proc=data_args.preprocessing_num_workers,
-            remove_columns=column_names,
-            load_from_cache_file=not data_args.overwrite_cache,
-        ) for k in datasets.keys() if k != "train"}
-        tokenized_datasets['train'] = shuffled_train_set
-
-    else:
-        pprepare_features = partial(prepare_features, tokenizer=tokenizer, data_args=data_args)
-        tokenized_datasets = datasets.map(
-            pprepare_features,
-            batched=True,
-            num_proc=data_args.preprocessing_num_workers,
-            remove_columns=column_names,
-            load_from_cache_file=not data_args.overwrite_cache,
-        )
-
-    if config.model_type == "openai-gpt":
-        tokenizer.add_special_tokens({'cls_token': '[CLS]', 'pad_token': '[pad]'})
-        config.pad_token_id = tokenizer.pad_token_id
-        # tokenizer.add_special_tokens({'cls_token': '[CLS]'})
-        model.resize_token_embeddings(len(tokenizer))
+    pprepare_features = partial(prepare_features, tokenizer=tokenizer, data_args=data_args)
+    tokenized_datasets = datasets.map(
+        pprepare_features,
+        batched=True,
+        num_proc=data_args.preprocessing_num_workers,
+        remove_columns=column_names,
+        load_from_cache_file=not data_args.overwrite_cache,
+    )
 
     # Data collator
     data_collator = (

@@ -157,3 +157,9 @@ shell*/
 *.py.lock
 *.pt
 exp/
+
+*.tar.gz
+*.json
+*reader/
+*selector/
+*.zip
