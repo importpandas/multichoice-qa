@@ -29,7 +29,7 @@ from torch.utils.data.dataloader import DataLoader
 from torch.utils.data.sampler import SequentialSampler
 import tqdm
 
-from datasets import load_dataset
+from datasets import load_dataset, ReadInstruction
 from functools import partial
 
 import transformers
@@ -50,12 +50,22 @@ from ..cli.argument import BasicModelArguments, BasicDataTrainingArguments
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class DataTrainingArguments(BasicDataTrainingArguments):
+    """
+    Arguments pertaining to what data we are going to input our model for training and eval.
+    """
+    debug_mode:  bool = field(
+        default=False, metadata={"help": "whether to load a subset of data for debug"}
+    )
+
+
 def main():
     # See all possible arguments in src/transformers/training_args.py
     # or by passing the --help flag to this script.
     # We now keep distinct sets of args, for a cleaner separation of concerns.
 
-    parser = HfArgumentParser((BasicModelArguments, BasicDataTrainingArguments, TrainingArguments))
+    parser = HfArgumentParser((BasicModelArguments, DataTrainingArguments, TrainingArguments))
     if len(sys.argv) == 2 and sys.argv[1].endswith(".json"):
         # If we pass only one argument to the script and it's the path to a json file,
         # let's parse it to get our arguments.
@@ -97,13 +107,17 @@ def main():
 
     # In distributed training, the load_dataset function guarantee that only one local process can concurrently
     # download the dataset.
-    data_files = {}
-    data_files['train'] = data_args.train_file if data_args.train_file is not None else None
-    data_files['validation'] = data_args.validation_file if data_args.validation_file is not None else None
-    data_files['test'] = data_args.test_file if data_args.test_file is not None else None
 
-    datasets = load_dataset(data_args.dataload_script, data_args.dataload_split, data_files=data_files if data_files['train'] is not None else None,
-                            data_dir=data_args.data_dir)
+    if data_args.debug_mode:
+        datasets = load_dataset(data_args.dataload_script, data_args.dataload_split,
+                                data_dir=data_args.data_dir,
+                                split={'train': ReadInstruction('train', from_=0, to=5, unit='abs'),
+                                       'validation': ReadInstruction('validation', from_=0, to=5, unit='abs'),
+                                       'test': ReadInstruction('test', from_=0, to=5, unit='abs')})
+    else:
+        datasets = load_dataset(data_args.dataload_script, data_args.dataload_split,
+                                data_dir=data_args.data_dir)
+
     # See more about loading any type of standard or custom dataset (from files, python dict, pandas DataFrame, etc) at
     # https://huggingface.co/docs/datasets/loading_datasets.html.
 
@@ -157,7 +171,7 @@ def main():
     for train_test_or_eval, dataset in tokenized_datasets.items():
         dataloader = DataLoader(
             dataset,
-            batch_size=training_args.eval_batch_size,
+            batch_size=1,
             sampler=SequentialSampler(dataset),
             collate_fn=data_collator,
             num_workers=0
@@ -167,7 +181,7 @@ def main():
         options_prob_diff_split = {}
         acc_split = {}
         print(f'{train_test_or_eval}', len(dataloader))
-        for step, batch in tqdm.tqdm(enumerate(dataloader)):
+        for step, batch in enumerate(tqdm.tqdm(dataloader)):
             with torch.no_grad():
                 origin_inputs = {
                     "input_ids": batch['input_ids'].to(device),

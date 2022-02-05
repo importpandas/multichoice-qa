@@ -249,7 +249,7 @@ def main():
             with open(output_eval_file, "a+") as writer:
                 logger.info("***** Extensive Eval results *****")
                 if not training_args.do_train:
-                    writer.write(f"eval checkpoint {model_args.model_name_or_path}")
+                    writer.write(f"eval checkpoint {model_args.model_name_or_path}\n")
                 for key, value in sorted(results.metrics.items()):
                     logger.info(f"  {key} = {value}")
                     writer.write(f"{key} = {value}\n")
