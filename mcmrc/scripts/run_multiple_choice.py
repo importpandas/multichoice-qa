@@ -136,20 +136,15 @@ def main():
     # download the dataset.
     # See more about loading any type of standard or custom dataset (from files, python dict, pandas DataFrame, etc) at
     # https://huggingface.co/docs/datasets/loading_datasets.html.
-    data_files = {'train': data_args.train_file if data_args.train_file is not None else None,
-                  'validation': data_args.validation_file if data_args.validation_file is not None else None,
-                  'test': data_args.test_file if data_args.test_file is not None else None}
 
     if data_args.debug_mode:
         datasets = load_dataset(data_args.dataload_script, data_args.dataload_split,
-                                data_files=data_files if data_files['train'] is not None else None,
                                 data_dir=data_args.data_dir,
                                 split={'train': ReadInstruction('train', from_=0, to=5, unit='abs'),
                                        'validation': ReadInstruction('validation', from_=0, to=5, unit='abs'),
                                        'test': ReadInstruction('test', from_=0, to=5, unit='abs')})
     else:
         datasets = load_dataset(data_args.dataload_script, data_args.dataload_split,
-                                data_files=data_files if data_files['validation'] is not None else None,
                                 data_dir=data_args.data_dir)
 
     if data_args.split_train_dataset:
@@ -253,6 +248,8 @@ def main():
             output_eval_file = os.path.join(training_args.output_dir, f"{split}_results.txt")
             with open(output_eval_file, "a+") as writer:
                 logger.info("***** Extensive Eval results *****")
+                if not training_args.do_train:
+                    writer.write(f"eval checkpoint {model_args.model_name_or_path}")
                 for key, value in sorted(results.metrics.items()):
                     logger.info(f"  {key} = {value}")
                     writer.write(f"{key} = {value}\n")
