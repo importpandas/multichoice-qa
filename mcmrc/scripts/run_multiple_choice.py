@@ -241,9 +241,22 @@ def main():
     # --evaluation_strategy steps \
     if training_args.do_eval:
 
+        if training_args.load_best_model_at_end:
+            best_model = AutoModelForMultipleChoice.from_pretrained(
+                            training_args.output_dir,
+                            from_tf=bool(".ckpt" in model_args.model_name_or_path),
+                            config=config,
+                            cache_dir=model_args.cache_dir,
+                        )
+
         for split in [k for k in datasets.keys() if k != "train"]:
             logger.info(f"*** Evaluate {split} set ***")
             results = trainer.evaluate(tokenized_datasets[split])
+            if training_args.load_best_model_at_end:
+                final_model = trainer.model
+                trainer.model = best_model
+                best_model_results = trainer.evaluate(tokenized_datasets[split])
+                trainer.model = final_model
 
             output_eval_file = os.path.join(training_args.output_dir, f"{split}_results.txt")
             with open(output_eval_file, "a+") as writer:
@@ -253,7 +266,11 @@ def main():
                 for key, value in sorted(results.metrics.items()):
                     logger.info(f"  {key} = {value}")
                     writer.write(f"{key} = {value}\n")
-
+                if training_args.load_best_model_at_end:
+                    writer.write(f"best model on dev set\n")
+                    for key, value in sorted(best_model_results.metrics.items()):
+                        logger.info(f"  {key} = {value}")
+                        writer.write(f"{key} = {value}\n")
             if data_args.output_prediction_file or data_args.split_train_dataset:
                 prediction = {example_id: prediction.tolist() for prediction, label_id, example_id in zip(*results[: -1])}
                 if split == "holdout_set":
