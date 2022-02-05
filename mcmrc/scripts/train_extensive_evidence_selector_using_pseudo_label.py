@@ -550,7 +550,7 @@ def main():
 
         for split in ["validation", "test"]:
             logger.info(f"*** Evaluate {split} set ***")
-            metrics = intensive_trainer.evaluate_intensive_selector_with_explicit_reader(
+            metrics, _ = intensive_trainer.evaluate_intensive_selector_with_explicit_reader(
                 evidence_reader=evidence_reader,
                 multiple_choice_dataset=multiple_choice_datasets[split],
                 intensive_selector_dataset=train_intensive_evidence_selector_datasets[split])

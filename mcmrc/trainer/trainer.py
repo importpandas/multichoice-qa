@@ -514,7 +514,7 @@ class Trainer:
 
         all_example_ids = []
         start_time = timeit.default_timer()
-        for step, inputs in tqdm(enumerate(eval_dataloader)):
+        for step, inputs in enumerate(tqdm(eval_dataloader)):
             if 'example_ids' in inputs.keys():
                 example_ids = inputs.pop('example_ids')
                 all_example_ids += example_ids
