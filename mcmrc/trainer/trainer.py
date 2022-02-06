@@ -162,7 +162,7 @@ class Trainer:
 
     def _build_optimizer(self):
         # Local optimizer
-        no_decay = ["bias", "LayerNorm.weight"]
+        no_decay = ["bias", "LayerNorm.weight", 'gamma', 'beta']
         large_lr = ['classifier']
         optimizer_grouped_parameters = []
         for n, p in self.model.named_parameters():
