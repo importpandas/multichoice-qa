@@ -248,6 +248,7 @@ def main():
                             config=config,
                             cache_dir=model_args.cache_dir,
                         )
+            best_model = best_model.to(training_args.device)
 
         for split in [k for k in datasets.keys() if k != "train"]:
             logger.info(f"*** Evaluate {split} set ***")
