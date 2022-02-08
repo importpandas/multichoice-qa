@@ -46,7 +46,7 @@ from utils.initialization import setup_root_logger
 
 from ..data_utils.collator import DataCollatorForMultipleChoice
 from ..cli.argument import BasicModelArguments, BasicDataTrainingArguments
-from ..trainer.trainer import Trainer
+from ..trainer.trainer import Trainer, compute_mc_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -205,12 +205,6 @@ def main():
         default_data_collator if data_args.pad_to_max_length else DataCollatorForMultipleChoice(tokenizer=tokenizer)
     )
 
-    # Metric
-    def compute_metrics(eval_predictions):
-        predictions, label_ids = eval_predictions
-        preds = np.argmax(predictions, axis=1)
-        return {"accuracy": (preds == label_ids).astype(np.float32).mean().item()}
-
     # Initialize our Trainer
     trainer = Trainer(
         model=model,
@@ -219,7 +213,7 @@ def main():
         eval_dataset=tokenized_datasets["validation"] if training_args.do_eval else None,
         tokenizer=tokenizer,
         data_collator=data_collator,
-        compute_metrics=compute_metrics,
+        compute_metrics=compute_mc_metrics,
     )
 
     # Training
