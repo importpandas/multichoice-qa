@@ -223,19 +223,17 @@ def main():
     # download the dataset.
     # See more about loading any type of standard or custom dataset (from files, python dict, pandas DataFrame, etc) at
     # https://huggingface.co/docs/datasets/loading_datasets.html.
-    data_files = {'train': data_args.train_file if data_args.train_file is not None else None,
-                  'validation': data_args.validation_file if data_args.validation_file is not None else None,
-                  'test': data_args.test_file if data_args.test_file is not None else None}
 
-    # datasets = load_dataset(data_args.dataload_script, data_args.dataload_split,
-    #                         data_files=data_files if data_files['train'] is not None else None,
-    #                         data_dir=data_args.data_dir,
-    #                         split={'train': ReadInstruction('train', from_=0, to=2, unit='abs'),
-    #                                'validation': ReadInstruction('validation', from_=0, to=2, unit='abs'),
-    #                                'test': ReadInstruction('test', from_=0, to=2, unit='abs')})
-    datasets = load_dataset(data_args.dataload_script, data_args.dataload_split,
-                            data_files=data_files if data_files['train'] is not None else None,
-                            data_dir=data_args.data_dir)
+    if data_args.debug_mode:
+        datasets = load_dataset(data_args.dataload_script, data_args.dataload_split,
+                                data_dir=data_args.data_dir,
+                                split={'train': ReadInstruction('train', from_=0, to=5, unit='abs'),
+                                       'validation': ReadInstruction('validation', from_=0, to=5, unit='abs'),
+                                       'test': ReadInstruction('test', from_=0, to=5, unit='abs')})
+    else:
+        datasets = load_dataset(data_args.dataload_script, data_args.dataload_split,
+                                data_dir=data_args.data_dir)
+
     if training_args.eval_on_exp_race:
         datasets['exp'] = Dataset.from_dict(load_exp_race_data(data_args.exp_race_file))
 

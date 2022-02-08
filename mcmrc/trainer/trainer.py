@@ -51,7 +51,6 @@ def evaluate_verifier_with_reader_and_iselector(
         label_dict,
         threshold=None
 ):
-
     merge_ratio = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5]
     merge_prediction = {k: {} for k in merge_ratio}
     verifier_probs = {}
@@ -65,11 +64,12 @@ def evaluate_verifier_with_reader_and_iselector(
     metric_list = []
     for ratio in merge_ratio:
         if threshold is not None:
-            per_ratio_threshold = threshold[f"merge_{ratio}" +"_"+ "best_thresh"]
+            per_ratio_threshold = threshold[f"merge_{ratio}" + "_" + "best_thresh"]
         else:
             per_ratio_threshold = -1
-        metrics = {f"merge_{ratio}" +"_"+ k: v for k, v in
-                    compute_verifier_metrics(merge_prediction[ratio], label_dict, verifier_probs, per_ratio_threshold).items()}
+        metrics = {f"merge_{ratio}" + "_" + k: v for k, v in
+                   compute_verifier_metrics(merge_prediction[ratio], label_dict, verifier_probs,
+                                            per_ratio_threshold).items()}
         metric_list.append(metrics)
 
     merged_metrics = {}
@@ -84,7 +84,6 @@ def evaluate_mc_style_verifier_with_reader_and_iselector(
         verifier_logits,
         label_dict,
 ):
-
     merge_ratio = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5]
     merge_predictions = {k: {r: [] for r in merge_ratio} for k in merge_ratio}
     label_list = []
@@ -94,16 +93,20 @@ def evaluate_mc_style_verifier_with_reader_and_iselector(
         selector_prob = torch.softmax(torch.tensor(selector_logits[example_id]), -1)
         reader_prob = torch.softmax(torch.tensor(reader_logits[example_id]), -1)
         for merge_selector_ratio in merge_ratio:
-            merge_selector_prediction = (merge_selector_ratio * selector_prob + (1 - merge_selector_ratio) * reader_prob)
+            merge_selector_prediction = (
+                        merge_selector_ratio * selector_prob + (1 - merge_selector_ratio) * reader_prob)
             for merge_verifier_ratio in merge_ratio:
-                merge_verifier_prediction = (merge_verifier_ratio * verifier_prob + (1 - merge_verifier_ratio) * merge_selector_prediction).tolist()
+                merge_verifier_prediction = (merge_verifier_ratio * verifier_prob + (
+                            1 - merge_verifier_ratio) * merge_selector_prediction).tolist()
                 merge_predictions[merge_selector_ratio][merge_verifier_ratio].append(merge_verifier_prediction)
 
     metrics = {}
     for merge_selector_ratio in merge_ratio:
         for merge_verifier_ratio in merge_ratio:
             metrics[f"selector_merge_{merge_selector_ratio}_verifier_merge_{merge_verifier_ratio}_acc"] = \
-                compute_mc_metrics(EvalPrediction(predictions=merge_predictions[merge_selector_ratio][merge_verifier_ratio], label_ids=label_list))['accuracy']
+                compute_mc_metrics(
+                    EvalPrediction(predictions=merge_predictions[merge_selector_ratio][merge_verifier_ratio],
+                                   label_ids=label_list))['accuracy']
     return metrics
 
 
@@ -339,7 +342,8 @@ class Trainer:
                                       num_workers=self.args.dataloader_num_workers)
 
         # self.t_total = math.ceil(len(train_dataloader) / self.gradient_accumulation_steps) * self.num_train_epochs # unexpected
-        self.t_total = (len(train_dataloader) // self.gradient_accumulation_steps) * self.num_train_epochs  # last of each epoch will be dropped
+        # last of each epoch will be dropped
+        self.t_total = (len(train_dataloader) // self.gradient_accumulation_steps) * self.num_train_epochs  
         self.warmup_steps = int(self.t_total * 0.1)
 
         # Prepare optimizer and schedule (linear warmup and decay)
@@ -393,7 +397,7 @@ class Trainer:
             self.optimizer.zero_grad()  # drop last
             for step, batch in enumerate(train_dataloader):
                 # Skip past any already trained steps if resuming training
-                #torch.autograd.set_detect_anomaly(True)
+                # torch.autograd.set_detect_anomaly(True)
                 with self.timer['gpu']:
                     loss = self.training_step(model, batch)  # backward in local machine
                 tr_loss += loss.item()
@@ -423,8 +427,8 @@ class Trainer:
                                 metrics[f'step{global_step} eval_{key}'] = value
 
                             _current_eval_acc = max([value for key, value in results.metrics.items() if 'acc' in key]) \
-                                            if [value for key, value in results.metrics.items() if 'acc' in key] else  \
-                                            max([-value for key, value in results.metrics.items() if 'loss' in key])
+                                if [value for key, value in results.metrics.items() if 'acc' in key] else \
+                                max([-value for key, value in results.metrics.items() if 'loss' in key])
                             if best_eval_acc < _current_eval_acc:
                                 best_eval_acc = _current_eval_acc
                                 if self.rank == 0:
@@ -539,7 +543,8 @@ class Trainer:
         label_ids = labels_gatherer.finalize() if not prediction_loss_only else None
 
         if compute_metrics is not None and preds is not None and label_ids is not None:
-            metrics = compute_metrics(EvalPrediction(predictions=preds, label_ids=label_ids))
+            metrics = compute_metrics(EvalPrediction(predictions=preds, label_ids=label_ids),
+                                      all_example_ids=all_example_ids if len(all_example_ids) > 0 else None)
         else:
             metrics = {}
 
@@ -579,7 +584,8 @@ class Trainer:
         )
         if 'evidence_sentence' in processed_datasets.column_names:
             evidence_sentences = {eid: evidence_sent for eid, evidence_sent in zip(processed_datasets['example_ids'],
-                                                                                   processed_datasets['evidence_sentence'])}
+                                                                                   processed_datasets[
+                                                                                       'evidence_sentence'])}
             processed_datasets = processed_datasets.remove_columns("evidence_sentence")
         else:
             evidence_sentences = {}
@@ -605,10 +611,12 @@ class Trainer:
             orig_example_id = processed_example_id[:-2]
             corresponding_option = int(processed_example_id[-1])
             is_answer_option.append(int(corresponding_option == answer_dict[orig_example_id]))
-        right_option_acc = compute_mc_metrics(EvalPrediction(predictions=output.predictions, label_ids=output.label_ids),
-                                              is_answer_option)
-        wrong_option_acc = compute_mc_metrics(EvalPrediction(predictions=output.predictions, label_ids=output.label_ids),
-                                              1 - np.array(is_answer_option))
+        right_option_acc = compute_mc_metrics(
+            EvalPrediction(predictions=output.predictions, label_ids=output.label_ids),
+            is_answer_option)
+        wrong_option_acc = compute_mc_metrics(
+            EvalPrediction(predictions=output.predictions, label_ids=output.label_ids),
+            1 - np.array(is_answer_option))
         output.metrics.update({f'{metric_key_prefix}_right_acc': right_option_acc['accuracy'],
                                f'{metric_key_prefix}_wrong_acc': wrong_option_acc['accuracy']})
 
@@ -724,9 +732,11 @@ class Trainer:
         metrics = {}
         all_evidence_sentence = {}
         for evidence_len in [1, 2, 3]:
-            pprepare_feature_func = partial(feature_func_for_evidence_reading, evidence_len=evidence_len, evidence_logits=evidence_logits)
+            pprepare_feature_func = partial(feature_func_for_evidence_reading, evidence_len=evidence_len,
+                                            evidence_logits=evidence_logits)
             output, evidence_sentence = self.evidence_reading(evidence_reader, eval_dataset,
-                                                              pprepare_feature_func, metric_key_prefix=f'fulleval{evidence_len}')
+                                                              pprepare_feature_func,
+                                                              metric_key_prefix=f'fulleval{evidence_len}')
             all_evidence_sentence[evidence_len] = evidence_sentence
             metrics = {**metrics, **output}
 
@@ -738,7 +748,7 @@ class Trainer:
             evidence_reader,
             multiple_choice_dataset,
             intensive_selector_dataset,
-          ):
+    ):
 
         evidence_reader = evidence_reader.to(self.args.device)
         _model = self.model
@@ -776,13 +786,16 @@ class Trainer:
             intensive_selector_prediction = intensive_selector_predictions[example_id]
             evidence_reader_prediction = evidence_reader_predictions[example_id]
             for ratio in merge_ratio:
-                merge_prediction[ratio].append((ratio * intensive_selector_prediction + (1 - ratio) * evidence_reader_prediction).tolist())
-                merge_prediction_dict[ratio][example_id] = (ratio * intensive_selector_prediction + (1 - ratio) * evidence_reader_prediction).tolist()
+                merge_prediction[ratio].append(
+                    (ratio * intensive_selector_prediction + (1 - ratio) * evidence_reader_prediction).tolist())
+                merge_prediction_dict[ratio][example_id] = (
+                            ratio * intensive_selector_prediction + (1 - ratio) * evidence_reader_prediction).tolist()
 
-        merged_acc = {f"merge_{ratio}_acc": compute_mc_metrics(EvalPrediction(predictions=merge_prediction[ratio], label_ids=label_list))['accuracy']
+        merged_acc = {f"merge_{ratio}_acc":
+                          compute_mc_metrics(EvalPrediction(predictions=merge_prediction[ratio], label_ids=label_list))[
+                              'accuracy']
                       for ratio in merge_ratio}
 
         metrics = {**evidence_reader_output.metrics, **intensive_selector_output.metrics}
         metrics = {**metrics, **merged_acc}
         return metrics, merge_prediction_dict
-

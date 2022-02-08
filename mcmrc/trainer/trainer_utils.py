@@ -24,13 +24,20 @@ class PredictionOutput(NamedTuple):
     metrics: Optional[Dict[str, float]]
 
 
-def compute_mc_metrics(eval_predictions, mask=None):
+def compute_mc_metrics(eval_predictions, mask=None, all_example_ids=None):
     predictions, label_ids = eval_predictions
     preds = np.argmax(predictions, axis=1)
     if mask is None:
         acc = ((preds == label_ids).astype(np.float32).mean().item()) * 100
     else:
         acc = (((preds == label_ids) & np.array(mask)).sum() / np.array(mask).sum()) * 100
+    high_set_mask = [1 if 'high' in example_id else 0 for example_id in all_example_ids]
+    middle_set_mask =[1 if 'middle' in example_id else 0 for example_id in all_example_ids]
+    if sum(high_set_mask) > 0:
+        assert sum(high_set_mask) + sum(middle_set_mask) == len(all_example_ids)
+        high_set_acc = (((preds == label_ids) & np.array(high_set_mask)).sum() / np.array(high_set_mask).sum()) * 100
+        middle_set_acc = (((preds == label_ids) & np.array(middle_set_mask)).sum() / np.array(middle_set_mask).sum()) * 100
+        return {"accuracy": acc, 'high_accuracy': high_set_acc, 'middle_accuracy': middle_set_acc}
     return {"accuracy": acc}
 
 
