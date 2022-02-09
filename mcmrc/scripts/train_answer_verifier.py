@@ -51,7 +51,7 @@ from ..trainer.trainer_utils import compute_mc_metrics, compute_classification_m
 from mcmrc.data_utils.processors import (
     prepare_features_for_initializing_extensive_evidence_selector,
     prepare_features_for_generating_optionwise_evidence, prepare_features_for_reading_optionwise_evidence,
-    prepare_features_for_intensive_evidence_selector,
+    prepare_features_for_answer_verifier,
     prepare_features,
     load_exp_race_data,
     load_adv_race_data
@@ -70,7 +70,7 @@ class ModelArguments(BasicModelArguments):
         default="",
         metadata={"help": "Path to extensive evidence selector"}
     )
-    intensive_evidence_selector_path: str = field(
+    answer_verifier_path: str = field(
         default="",
         metadata={"help": "Path to intensive evidence selector"}
     )
@@ -86,6 +86,9 @@ class DataTrainingArguments(BasicDataTrainingArguments):
     """
     Arguments pertaining to what data we are going to input our model for training and eval.
     """
+    debug_mode:  bool = field(
+        default=False, metadata={"help": "whether to load a subset of data for debug"}
+    )
     pseudo_label_path: str = field(
         default="",
         metadata={"help": "Path to pseudo evidence label"}
@@ -141,21 +144,21 @@ class AllTrainingArguments(TrainingArguments):
     train_extensive_evidence_selector: bool = field(
         default=False,
         metadata={"help": "Whether to train extensive evidence reader."})
-    train_intensive_evidence_selector: bool = field(
+    train_answer_verifier: bool = field(
         default=False,
-        metadata={"help": "Whether to train intensive evidence reader."})
+        metadata={"help": "Whether to train answer verifier."})
     eval_extensive_evidence_selector: bool = field(
         default=False,
         metadata={"help": "Whether to evaluate extensive evidence reader."})
-    eval_intensive_evidence_selector: bool = field(
+    eval_answer_verifier: bool = field(
         default=False,
-        metadata={"help": "Whether to evaluate intensive evidence reader."})
+        metadata={"help": "Whether to evaluate answer verifier."})
     eval_on_exp_race: bool = field(
         default=False,
-        metadata={"help": "Whether to evaluate intensive evidence reader on Exp RACE dev set."})
+        metadata={"help": "Whether to evaluate answer verifier on Exp RACE dev set."})
     eval_on_adv_race: bool = field(
         default=False,
-        metadata={"help": "Whether to evaluate intensive evidence reader on AdvRACE set."})
+        metadata={"help": "Whether to evaluate answer  on AdvRACE set."})
     num_train_selector_epochs: float = field(
         default=3.0,
         metadata={"help": "Total number of training epochs of evidence selector to perform."})
@@ -180,7 +183,7 @@ def main():
     checkpoint_dir = hyperparam_path_for_two_stage_evidence_selector(model_args, data_args, training_args)
     ckpt_dir = Path(checkpoint_dir)
     postfix = ""
-    if training_args.train_extensive_evidence_selector or training_args.train_intensive_evidence_selector:
+    if training_args.train_extensive_evidence_selector or training_args.train_answer_verifier:
         postfix += "_train"
     else:
         postfix += "_eval"
@@ -255,8 +258,8 @@ def main():
     )
     extensive_evidence_selector_path = model_args.extensive_evidence_selector_path \
         if model_args.extensive_evidence_selector_path else model_args.model_name_or_path
-    intensive_evidence_selector_path = model_args.intensive_evidence_selector_path \
-        if model_args.intensive_evidence_selector_path else model_args.model_name_or_path
+    answer_verifier_path = model_args.answer_verifier_path \
+        if model_args.answer_verifier_path else model_args.model_name_or_path
     evidence_reader_path = model_args.evidence_reader_path \
         if model_args.evidence_reader_path else model_args.model_name_or_path
 
@@ -264,8 +267,8 @@ def main():
         extensive_evidence_selector_path,
         cache_dir=model_args.cache_dir,
     )
-    intensive_selector_config = AutoConfig.from_pretrained(
-        intensive_evidence_selector_path,
+    answer_verifier_config = AutoConfig.from_pretrained(
+        answer_verifier_path,
         cache_dir=model_args.cache_dir,
     )
     evidence_reader_config = AutoConfig.from_pretrained(
@@ -278,9 +281,9 @@ def main():
         config=extensive_selector_config,
         cache_dir=model_args.cache_dir,
     )
-    intensive_evidence_selector = AutoModelForMultipleChoice.from_pretrained(
-        intensive_evidence_selector_path,
-        config=intensive_selector_config,
+    answer_verifier = AutoModelForMultipleChoice.from_pretrained(
+        answer_verifier_path,
+        config=answer_verifier_config,
         cache_dir=model_args.cache_dir,
     )
     evidence_reader = AutoModelForMultipleChoice.from_pretrained(
@@ -311,8 +314,8 @@ def main():
         tokenizer=tokenizer,
         data_args=data_args)
 
-    pprepare_features_for_intensive_evidence_selector = partial(
-        prepare_features_for_intensive_evidence_selector,
+    pprepare_features_for_answer_verifier = partial(
+        prepare_features_for_answer_verifier,
         evidence_len=data_args.intensive_evidence_len,
         train_intensive_selector_with_option=data_args.train_intensive_selector_with_option,
         train_intensive_selector_with_non_overlapping_evidence=data_args.train_intensive_selector_with_non_overlapping_evidence,
@@ -336,8 +339,8 @@ def main():
     )
 
     training_args.num_train_epochs = training_args.num_train_verifier_epochs
-    intensive_trainer = Trainer(
-        model=intensive_evidence_selector,
+    verifier_trainer = Trainer(
+        model=answer_verifier,
         args=training_args,
         train_dataset=None,
         eval_dataset=None,
@@ -345,9 +348,9 @@ def main():
         data_collator=DataCollatorForMultipleChoice(tokenizer=tokenizer),
         compute_metrics=compute_mc_metrics,
     )
-    if training_args.train_extensive_evidence_selector and training_args.train_intensive_evidence_selector:
+    if training_args.train_extensive_evidence_selector and training_args.train_answer_verifier:
         extensive_trainer.checkpoint_dir = os.path.join(training_args.output_dir, "extensive_evidence_selector")
-        intensive_trainer.checkpoint_dir = os.path.join(training_args.output_dir, "intensive_evidence_selector")
+        verifier_trainer.checkpoint_dir = os.path.join(training_args.output_dir, "answer_verifier")
 
     mc_trainer = Trainer(
         model=evidence_reader,
@@ -359,7 +362,7 @@ def main():
         compute_metrics=compute_mc_metrics,
     )
 
-    if training_args.eval_intensive_evidence_selector:
+    if training_args.eval_answer_verifier:
         multiple_choice_datasets = {k: datasets[k].map(
             pprepare_features_for_multiple_choice,
             batched=True,
@@ -415,11 +418,11 @@ def main():
                 json.dump(all_evidence_sentences, f)
 
     # generate extensive evidence logits
-    if training_args.train_intensive_evidence_selector:
+    if training_args.train_answer_verifier:
         extensive_evidence_logits = {
             k: extensive_trainer.evidence_generating(v, pprepare_features_for_generating_optionwise_evidence) for k, v
             in datasets.items()}
-    elif training_args.eval_intensive_evidence_selector:
+    elif training_args.eval_answer_verifier:
         extensive_evidence_logits = {
             k: extensive_trainer.evidence_generating(v, pprepare_features_for_generating_optionwise_evidence)
             for k, v in datasets.items() if k != "train"}
@@ -429,9 +432,9 @@ def main():
         json.dump(extensive_evidence_logits, f)
 
     # prepare features for intensive evidence selector
-    if training_args.train_intensive_evidence_selector or training_args.eval_intensive_evidence_selector:
+    if training_args.train_answer_verifier or training_args.eval_answer_verifier:
         logger.info("**** preparing features for intensive evidence selector ****")
-        train_intensive_evidence_selector_datasets = {}
+        train_answer_verifier_datasets = {}
         extensive_evidence_sentences = {}
 
         # if training_args.eval_on_exp_race:
@@ -459,11 +462,11 @@ def main():
         #             adv_dataset, pprepare_features_for_generating_optionwise_evidence)
 
         for split in datasets.keys():
-            if not training_args.train_intensive_evidence_selector and split == 'train':
+            if not training_args.train_answer_verifier and split == 'train':
                 continue
 
-            intensive_dataset = datasets[split].map(
-                partial(pprepare_features_for_intensive_evidence_selector,
+            verifier_dataset = datasets[split].map(
+                partial(pprepare_features_for_answer_verifier,
                         evidence_logits=extensive_evidence_logits[split]),
                 batched=True,
                 num_proc=data_args.preprocessing_num_workers,
@@ -474,10 +477,10 @@ def main():
             evidence_sentences = {eid: [[(logit, sent) for sent, logit in zip(option_sents, option_logits)]
                                         for option_sents, option_logits in zip(evidence_sent, evidence_logit)]
                                         for eid, evidence_sent, evidence_logit in
-                                  zip(intensive_dataset['example_ids'],
-                                      intensive_dataset['evidence_sentence'],
-                                      intensive_dataset['evidence_logit'])}
-            train_intensive_evidence_selector_datasets[split] = intensive_dataset.remove_columns(["evidence_sentence", "evidence_logit"])
+                                  zip(verifier_dataset['example_ids'],
+                                      verifier_dataset['evidence_sentence'],
+                                      verifier_dataset['evidence_logit'])}
+            train_answer_verifier_datasets[split] = verifier_dataset.remove_columns(["evidence_sentence", "evidence_logit"])
             extensive_evidence_sentences[split] = evidence_sentences
 
         output_evidence_file = os.path.join(training_args.output_dir, f"all_extensive_evidence.json")
@@ -490,17 +493,17 @@ def main():
         del extensive_evidence_selector
         torch.cuda.empty_cache()
 
-    if training_args.train_intensive_evidence_selector:
+    if training_args.train_answer_verifier:
         logger.info("**** Train intensive evidence selector ****")
-        intensive_trainer.train_dataset = train_intensive_evidence_selector_datasets["train"]
-        intensive_trainer.eval_dataset = train_intensive_evidence_selector_datasets["validation"]
+        verifier_trainer.train_dataset = train_answer_verifier_datasets["train"]
+        verifier_trainer.eval_dataset = train_answer_verifier_datasets["validation"]
 
-        train_result = intensive_trainer.train()
+        train_result = verifier_trainer.train()
 
-        output_train_file = os.path.join(training_args.output_dir, "intensive_train_results.txt")
+        output_train_file = os.path.join(training_args.output_dir, "verifier_train_results.txt")
         with open(output_train_file, "a+") as writer:
-            logger.info("***** Intensive Train results *****")
-            writer.write("***** Intensive Train results *****")
+            logger.info("***** Verifier Train results *****")
+            writer.write("***** Verifier Train results *****")
             for key, value in sorted(train_result.metrics.items()):
                 logger.info(f"  {key} = {value}")
                 writer.write(f"{key} = {value}\n")
@@ -512,7 +515,7 @@ def main():
     # --metric_for_best_model accuracy \
     # --evaluation_strategy steps \
 
-    if training_args.eval_intensive_evidence_selector:
+    if training_args.eval_answer_verifier:
 
         sets = ["validation", "test"]
         if training_args.eval_on_exp_race and data_args.dataset == "race":
@@ -523,12 +526,12 @@ def main():
 
         for split in sets:
             logger.info(f"*** Evaluate {split} set ***")
-            metrics, predictions = intensive_trainer.evaluate_intensive_selector_with_explicit_reader(
+            metrics, predictions = verifier_trainer.evaluate_answer_verifier_with_explicit_reader(
                 evidence_reader=evidence_reader,
                 multiple_choice_dataset=multiple_choice_datasets[split],
-                intensive_selector_dataset=train_intensive_evidence_selector_datasets[split])
+                intensive_selector_dataset=train_answer_verifier_datasets[split])
 
-            output_prediction_file = os.path.join(training_args.output_dir, f"{split}_intensive_predictions.json")
+            output_prediction_file = os.path.join(training_args.output_dir, f"{split}_verifier_predictions.json")
             with open(output_prediction_file, "w") as f:
                 json.dump(predictions, f)
             if training_args.eval_on_exp_race and split == "exp":
@@ -547,7 +550,7 @@ def main():
                     metrics[f"merge_{ratio}_total_count"] = total_count
                     metrics[f"merge_{ratio}_skip_count"] = skip_count
 
-            output_eval_file = os.path.join(training_args.output_dir, f"{split}_intensive_results.txt")
+            output_eval_file = os.path.join(training_args.output_dir, f"{split}_verifier_results.txt")
             with open(output_eval_file, "a+") as writer:
                 logger.info(f"***** Eval {split} results *****")
                 for key, value in sorted(metrics.items()):

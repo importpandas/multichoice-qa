@@ -743,7 +743,7 @@ class Trainer:
         return metrics, all_evidence_sentence
         # return output.metrics
 
-    def evaluate_intensive_selector_with_explicit_reader(
+    def evaluate_answer_verifier_with_explicit_reader(
             self,
             evidence_reader,
             multiple_choice_dataset,

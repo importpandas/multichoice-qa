@@ -972,7 +972,7 @@ def prepare_features_for_reading_optionwise_evidence(examples, evidence_logits=N
     return tokenized_examples
 
 
-def prepare_features_for_intensive_evidence_selector(
+def prepare_features_for_answer_verifier(
         examples,
         train_intensive_selector_with_option=False,
         train_intensive_selector_with_non_overlapping_evidence=False,
