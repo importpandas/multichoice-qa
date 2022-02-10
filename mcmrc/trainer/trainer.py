@@ -344,7 +344,7 @@ class Trainer:
         # self.t_total = math.ceil(len(train_dataloader) / self.gradient_accumulation_steps) * self.num_train_epochs # unexpected
         # last of each epoch will be dropped
         self.t_total = (len(train_dataloader) // self.gradient_accumulation_steps) * self.num_train_epochs  
-        self.warmup_steps = int(self.t_total * 0.1)
+        self.warmup_steps = self.args.get_warmup_steps(self.t_total)
 
         # Prepare optimizer and schedule (linear warmup and decay)
 
@@ -743,7 +743,7 @@ class Trainer:
         return metrics, all_evidence_sentence
         # return output.metrics
 
-    def evaluate_answer_verifier_with_explicit_reader(
+    def evaluate_ans_with_explicit_reader(
             self,
             evidence_reader,
             multiple_choice_dataset,
