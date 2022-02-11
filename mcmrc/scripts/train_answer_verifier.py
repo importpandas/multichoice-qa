@@ -391,8 +391,8 @@ def main():
             logger.info("***** Extensive Train results *****")
             writer.write("***** Extensive Train results *****")
             for key, value in sorted(train_result.metrics.items()):
-                logger.info(f"  {key} = {value}")
-                writer.write(f"{key} = {value}\n")
+                logger.info(f"{key} = {value:.3f}")
+                writer.write(f"{key} = {value:.3f}\n")
 
     if training_args.eval_extensive_evidence_selector:
         logger.info("**** Evaluate Extensive Evidence Selector ****")
@@ -410,8 +410,8 @@ def main():
             with open(output_eval_file, "a+") as writer:
                 logger.info("***** Extensive Eval results *****")
                 for key, value in sorted(metrics.items()):
-                    logger.info(f"  {key} = {value}")
-                    writer.write(f"{key} = {value}\n")
+                    logger.info(f"{key} = {value:.3f}")
+                    writer.write(f"{key} = {value:.3f}\n")
 
             output_evidence_file = os.path.join(training_args.output_dir, f"{split}_evidence.json")
             with open(output_evidence_file, "w") as f:
@@ -505,8 +505,8 @@ def main():
             logger.info("***** Verifier Train results *****")
             writer.write("***** Verifier Train results *****")
             for key, value in sorted(train_result.metrics.items()):
-                logger.info(f"  {key} = {value}")
-                writer.write(f"{key} = {value}\n")
+                logger.info(f"{key} = {value:.3f}")
+                writer.write(f"{key} = {value:.3f}\n")
 
     # Evaluation
     # To use the best checkpoint model at end, use the aruguments
@@ -554,9 +554,8 @@ def main():
             with open(output_eval_file, "a+") as writer:
                 logger.info(f"***** Eval {split} results *****")
                 for key, value in sorted(metrics.items()):
-                    logger.info(f"  {key} = {value}")
-                    writer.write(f"{key} = {value}\n")
-
+                    logger.info(f"{key} = {value:.3f}")
+                    writer.write(f"{key} = {value:.3f}\n")
 
 
 if __name__ == "__main__":

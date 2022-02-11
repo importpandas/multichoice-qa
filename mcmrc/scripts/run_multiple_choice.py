@@ -224,8 +224,8 @@ def main():
         with open(output_train_file, "w") as writer:
             logger.info("***** Train results *****")
             for key, value in sorted(train_result.metrics.items()):
-                logger.info(f"  {key} = {value}")
-                writer.write(f"{key} = {value}\n")
+                logger.info(f"{key} = {value:.3f}")
+                writer.write(f"{key} = {value:.3f}\n")
 
     # Evaluation
     # To use the best checkpoint model at end, use the aruguments
@@ -259,13 +259,13 @@ def main():
                 if not training_args.do_train:
                     writer.write(f"eval checkpoint {model_args.model_name_or_path}\n")
                 for key, value in sorted(results.metrics.items()):
-                    logger.info(f"  {key} = {value}")
-                    writer.write(f"{key} = {value}\n")
+                    logger.info(f"{key} = {value:.3f}")
+                    writer.write(f"{key} = {value:.3f}\n")
                 if training_args.load_best_model_at_end:
                     writer.write(f"best model on dev set\n")
                     for key, value in sorted(best_model_results.metrics.items()):
-                        logger.info(f"  {key} = {value}")
-                        writer.write(f"{key} = {value}\n")
+                        logger.info(f"{key} = {value:.3f}")
+                        writer.write(f"{key} = {value:.3f}\n")
             if data_args.output_prediction_file or data_args.split_train_dataset:
                 prediction = {example_id: prediction.tolist() for prediction, label_id, example_id in zip(*results[: -1])}
                 if split == "holdout_set":

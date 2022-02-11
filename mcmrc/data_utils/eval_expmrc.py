@@ -110,7 +110,7 @@ def evaluate_multi_choice(ground_truth_file, prediction_file):
 			answer_prediction = prediction_file[pid_with_qid]['answer']
 			evidence_prediction = prediction_file[pid_with_qid]['evidence']
 
-			temp_answer_f1 = 1 if answer_prediction==answers[j] else 0
+			temp_answer_f1 = 1 if answer_prediction == answers[j] else 0
 			if 'evidences' in sample:
 				temp_evidence_f1 = calc_f1_score(evidences[j], evidence_prediction)
 			else:
