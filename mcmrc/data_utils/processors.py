@@ -625,7 +625,7 @@ def prepare_features_for_initializing_simple_evidence_selector(examples, evidenc
     return tokenized_examples
 
 
-def prepare_features_for_initializing_extensive_evidence_selector(examples, evidence_sampling_num=2, tokenizer=None,
+def prepare_features_for_initializing_evidence_selector(examples, evidence_sampling_num=2, tokenizer=None,
                                                                   data_args=None, pseudo_label_path=""):
     contexts = examples['article']
     answers = examples['answer']
@@ -974,8 +974,8 @@ def prepare_features_for_reading_optionwise_evidence(examples, evidence_logits=N
 
 def prepare_features_for_answer_verifier(
         examples,
-        train_intensive_selector_with_option=False,
-        train_intensive_selector_with_non_overlapping_evidence=False,
+        train_verifier_with_option=False,
+        train_verifier_with_non_overlapping_evidence=False,
         evidence_logits=None,
         evidence_len=2,
         tokenizer=None,
@@ -1003,7 +1003,7 @@ def prepare_features_for_answer_verifier(
         question = process_text(questions[i])
         context_list = []
 
-        if train_intensive_selector_with_option:
+        if train_verifier_with_option:
             qa_pairs = []
             for j in range(num_choices):
                 option = process_text(options[i][j])
@@ -1023,7 +1023,7 @@ def prepare_features_for_answer_verifier(
         per_example_evidence_with_logits = [[] for _ in range(num_choices)]
         per_example_evidence_sent_idxs = [[] for _ in range(num_choices)]
         sent_num = len(evidence_logits[example_ids[i] + '_' + str(0)])
-        if train_intensive_selector_with_non_overlapping_evidence:
+        if train_verifier_with_non_overlapping_evidence:
             all_sorted_evidence_idxes = []
             max_evidence_num = num_choices * evidence_len if num_choices * evidence_len <= sent_num else sent_num
 

@@ -686,7 +686,7 @@ class Trainer:
                             evidence_logits[example_id][idx] = probs[i][idx].item()
         return evidence_logits
 
-    def evaluate_extensive_selector_with_explicit_reader(
+    def evaluate_selector_with_explicit_reader(
             self,
             evidence_reader,
             eval_dataset,
@@ -743,11 +743,11 @@ class Trainer:
         return metrics, all_evidence_sentence
         # return output.metrics
 
-    def evaluate_ans_with_explicit_reader(
+    def evaluate_answer_verifier_with_explicit_reader(
             self,
             evidence_reader,
             multiple_choice_dataset,
-            intensive_selector_dataset,
+            answer_verifier_dataset,
     ):
 
         evidence_reader = evidence_reader.to(self.args.device)
@@ -760,42 +760,45 @@ class Trainer:
             compute_metrics=compute_mc_metrics)
         self.model = _model
 
-        intensive_selector_output = self.evaluate(
-            intensive_selector_dataset,
+        answer_verifier_output = self.evaluate(
+            answer_verifier_dataset,
             description="Evaluation",
             metric_key_prefix="intensive_selector",
             compute_metrics=compute_mc_metrics)
 
         evidence_reader_predictions = {}
-        intensive_selector_predictions = {}
+        answer_verifier_predictions = {}
         labels = {}
         for prediction, label_id, example_id in zip(*evidence_reader_output[:-1]):
             evidence_reader_predictions[example_id] = torch.softmax(torch.tensor(prediction), -1)
             labels[example_id] = label_id
 
-        for prediction, label_id, example_id in zip(*intensive_selector_output[:-1]):
-            intensive_selector_predictions[example_id] = torch.softmax(torch.tensor(prediction), -1)
+        for prediction, label_id, example_id in zip(*answer_verifier_output[:-1]):
+            answer_verifier_predictions[example_id] = torch.softmax(torch.tensor(prediction), -1)
             assert labels[example_id] == label_id
 
         merge_ratio = [0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 1]
         merge_prediction = {k: [] for k in merge_ratio}
         merge_prediction_dict = {k: {} for k in merge_ratio}
         label_list = []
+        all_example_ids = []
         for example_id, label_id, in labels.items():
+            all_example_ids.append(example_id)
             label_list.append(label_id)
-            intensive_selector_prediction = intensive_selector_predictions[example_id]
+            answer_verifier_prediction = answer_verifier_predictions[example_id]
             evidence_reader_prediction = evidence_reader_predictions[example_id]
             for ratio in merge_ratio:
                 merge_prediction[ratio].append(
-                    (ratio * intensive_selector_prediction + (1 - ratio) * evidence_reader_prediction).tolist())
+                    (ratio * answer_verifier_prediction + (1 - ratio) * evidence_reader_prediction).tolist())
                 merge_prediction_dict[ratio][example_id] = (
-                            ratio * intensive_selector_prediction + (1 - ratio) * evidence_reader_prediction).tolist()
+                            ratio * answer_verifier_prediction + (1 - ratio) * evidence_reader_prediction).tolist()
 
-        merged_acc = {f"merge_{ratio}_acc":
-                          compute_mc_metrics(EvalPrediction(predictions=merge_prediction[ratio], label_ids=label_list))[
-                              'accuracy']
-                      for ratio in merge_ratio}
+        all_merged_results = {}
+        for ratio in merge_ratio:
+            merged_results = {f'merge_{ratio}_{k}': v for k, v in compute_mc_metrics(
+                EvalPrediction(predictions=merge_prediction[ratio], label_ids=label_list), all_example_ids=all_example_ids)}
+            all_merged_results = {**all_merged_results, **merged_results}
 
-        metrics = {**evidence_reader_output.metrics, **intensive_selector_output.metrics}
-        metrics = {**metrics, **merged_acc}
+        metrics = {**evidence_reader_output.metrics, **answer_verifier_output.metrics}
+        metrics = {**metrics, **all_merged_results}
         return metrics, merge_prediction_dict
