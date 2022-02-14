@@ -172,7 +172,8 @@ def prepare_features(examples, tokenizer=None, data_args=None):
             option = process_text(options[i][j])
 
             if "_" in question:
-                qa_cat = question.replace("_", option)
+                question = question.replace("_", "")
+                qa_cat = " ".join([question, option])
             else:
                 qa_cat = " ".join([question, option])
             qa_cat = " ".join(whitespace_tokenize(qa_cat)[- data_args.max_qa_length:])
@@ -233,7 +234,8 @@ def prepare_features_for_evaluating_evidence(examples, evidence_sentences=None, 
                 option = process_text(options[i][k])
 
                 if "_" in question:
-                    qa_cat = question.replace("_", option)
+                    question = question.replace("_", "")
+                    qa_cat = " ".join([question, option])
                 else:
                     qa_cat = " ".join([question, option])
                 qa_cat = " ".join(whitespace_tokenize(qa_cat)[- data_args.max_qa_length:])
@@ -290,7 +292,8 @@ def prepare_features_for_generate_pseudo_label(examples, tokenizer=None, data_ar
             option = process_text(options[i][j])
 
             if "_" in question:
-                qa_cat = question.replace("_", option)
+                question = question.replace("_", "")
+                qa_cat = " ".join([question, option])
             else:
                 qa_cat = " ".join([question, option])
 
@@ -423,7 +426,8 @@ def prepare_features_for_generating_multi_turn_pseudo_label(examples, tokenizer=
                 option = process_text(options[i][j])
 
                 if "_" in question:
-                    qa_cat = question.replace("_", option)
+                    question = question.replace("_", "")
+                    qa_cat = " ".join([question, option])
                 else:
                     qa_cat = " ".join([question, option])
                 qa_cat = " ".join(whitespace_tokenize(qa_cat)[- data_args.max_qa_length:])
@@ -869,7 +873,8 @@ def prepare_features_for_reading_evidence(examples, evidence_logits=None, pseudo
             option = process_text(options[i][j])
 
             if "_" in question:
-                qa_cat = question.replace("_", option)
+                question = question.replace("_", "")
+                qa_cat = " ".join([question, option])
             else:
                 qa_cat = " ".join([question, option])
             qa_cat = " ".join(whitespace_tokenize(qa_cat)[- data_args.max_qa_length:])
@@ -945,7 +950,8 @@ def prepare_features_for_reading_optionwise_evidence(examples, evidence_logits=N
                 option = process_text(options[i][k])
 
                 if "_" in question:
-                    qa_cat = question.replace("_", option)
+                    question = question.replace("_", "")
+                    qa_cat = " ".join([question, option])
                 else:
                     qa_cat = " ".join([question, option])
                 qa_cat = " ".join(whitespace_tokenize(qa_cat)[- data_args.max_qa_length:])
@@ -1009,7 +1015,8 @@ def prepare_features_for_answer_verifier(
                 option = process_text(options[i][j])
 
                 if "_" in question:
-                    qa_cat = question.replace("_", option)
+                    question = question.replace("_", "")
+                    qa_cat = " ".join([question, option])
                 else:
                     qa_cat = " ".join([question, option])
                 qa_cat = " ".join(whitespace_tokenize(qa_cat)[- data_args.max_qa_length:])
@@ -1144,7 +1151,8 @@ def prepare_features_for_training_answer_verifier(
             option = process_text(options[i][prediction])
 
             if "_" in question:
-                qa_cat = question.replace("_", option)
+                question = question.replace("_", "")
+                qa_cat = " ".join([question, option])
             else:
                 qa_cat = " ".join([question, option])
             qa_cat = " ".join(whitespace_tokenize(qa_cat)[- data_args.max_qa_length:])
@@ -1223,7 +1231,8 @@ def prepare_features_for_training_mc_style_answer_verifier(
             option = process_text(options[i][j])
 
             if "_" in question:
-                qa_cat = question.replace("_", option)
+                question = question.replace("_", "")
+                qa_cat = " ".join([question, option])
             else:
                 qa_cat = " ".join([question, option])
             qa_cat = " ".join(whitespace_tokenize(qa_cat)[- data_args.max_qa_length:])
