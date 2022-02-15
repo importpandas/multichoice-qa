@@ -64,6 +64,9 @@ class DataTrainingArguments(BasicDataTrainingArguments):
         default=False, metadata={"help": "whether to split training dataset "
                                          "like cross validation for evidence generating"}
     )
+    shuffle_train_dataset:  bool = field(
+        default=False, metadata={"help": "whether to shuffle the training dataset"}
+    )
     n_fold: int = field(
         default=5,
         metadata={"help": "split fold num of training dataset"},
@@ -146,6 +149,9 @@ def main():
     else:
         datasets = load_dataset(data_args.dataload_script, data_args.dataload_split,
                                 data_dir=data_args.data_dir)
+
+    if data_args.shuffle_train_dataset:
+        datasets['train'] = datasets['train'].shuffle(seed=training_args.seed)
 
     if data_args.split_train_dataset:
         holdout_set_start = int(len(datasets['train']) / data_args.n_fold * data_args.holdout_set)
