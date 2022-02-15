@@ -171,7 +171,7 @@ def prepare_features(examples, tokenizer=None, data_args=None):
         for j in range(num_choices):
             option = process_text(options[i][j])
 
-            if "_" in question:
+            if "_" in question and data_args.dataset == 'race':
                 question = question.replace("_", "")
                 qa_cat = " ".join([question, option])
             else:
@@ -183,10 +183,14 @@ def prepare_features(examples, tokenizer=None, data_args=None):
     first_sentences = sum(processed_contexts, [])
     second_sentences = sum(qa_list, [])
 
+    if data_args.dataset == "race":
+        truncation_strategy = "only_first"
+    else:
+        truncation_strategy = "longest_first"
     tokenized_examples = tokenizer(
         first_sentences,
         second_sentences,
-        truncation="only_first",
+        truncation=truncation_strategy,
         max_length=data_args.max_seq_length,
         padding="max_length" if data_args.pad_to_max_length else False,
     )
