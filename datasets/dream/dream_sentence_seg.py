@@ -44,12 +44,20 @@ In contrast to existing reading comprehension datasets, DREAM is the first to fo
 in-depth multi-turn multi-party dialogue understanding.
 """
 
-_URL = "https://raw.githubusercontent.com/nlpdata/dream/master/data/"
-_URLS = {
-    "train": _URL + "train.json",
-    "dev": _URL + "dev.json",
-    "test": _URL + "test.json",
+_REMOTE_URL = "https://raw.githubusercontent.com/nlpdata/dream/master/data/"
+_REMOTE_URLS = {
+    "train": _REMOTE_URL + "train.json",
+    "dev": _REMOTE_URL + "dev.json",
+    "test": _REMOTE_URL + "test.json",
 }
+
+_LOCAL_URL = "http://cu01:10086/"
+_LOCAL_URLS = {
+    "train": _LOCAL_URL + "train.json",
+    "dev": _LOCAL_URL + "dev.json",
+    "test": _LOCAL_URL + "test.json",
+}
+
 nlp = spacy.load("en_core_web_sm")
 
 
@@ -100,7 +108,12 @@ class Dream(datasets.GeneratorBasedBuilder):
         """Returns SplitGenerators."""
         # local path of the dataset  ⭐⭐ important ⭐⭐
         if self.config.data_files is None or self.config.data_files['train'] is None:
-            downloaded_files = dl_manager.download_and_extract(_URLS)
+            try:
+                downloaded_files = dl_manager.download_and_extract(_REMOTE_URLS)
+            except ConnectionError:
+                downloaded_files = dl_manager.download_and_extract(_LOCAL_URLS)
+            else:
+                raise ConnectionError("failed to connect to both local and remote urls")
             return [
                 datasets.SplitGenerator(name=datasets.Split.TRAIN, gen_kwargs={"filepath": downloaded_files["train"]}),
                 datasets.SplitGenerator(name=datasets.Split.VALIDATION, gen_kwargs={"filepath": downloaded_files["dev"]}),
