@@ -112,8 +112,6 @@ class Dream(datasets.GeneratorBasedBuilder):
                 downloaded_files = dl_manager.download_and_extract(_REMOTE_URLS)
             except ConnectionError:
                 downloaded_files = dl_manager.download_and_extract(_LOCAL_URLS)
-            else:
-                raise ConnectionError("failed to connect to both local and remote urls")
             return [
                 datasets.SplitGenerator(name=datasets.Split.TRAIN, gen_kwargs={"filepath": downloaded_files["train"]}),
                 datasets.SplitGenerator(name=datasets.Split.VALIDATION, gen_kwargs={"filepath": downloaded_files["dev"]}),

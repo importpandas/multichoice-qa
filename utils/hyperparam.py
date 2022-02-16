@@ -86,6 +86,8 @@ def hyperparam_path_for_baseline(model_args, data_args, training_args):
         logger.error("'data_args' has no attribute 'split_train_dataset'")
     if data_args.shuffle_train_dataset:
         exp_name += f'__shuffled_data_{data_args.shuffle_train_dataset}'
+    if data_args.pad_to_max_length:
+        exp_name += f'__pad_maxlen_{data_args.pad_to_max_length}'
 
     exp_path = os.path.join(training_args.output_dir, dataset_name, model_type, exp_name, now_time)
 

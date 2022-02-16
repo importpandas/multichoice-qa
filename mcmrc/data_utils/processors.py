@@ -5,6 +5,7 @@ import random
 import numpy as np
 import json
 import spacy
+import re
 nlp = spacy.load("en_core_web_sm")
 
 
@@ -147,6 +148,22 @@ def get_orig_chars_to_bounded_chars_mapping(tokens_char_span, total_len):
     return all_chars_to_start_chars, all_chars_to_end_chars
 
 
+def concat_question_option(question, option, dataset='dream'):
+    underline_count = len(re.findall("_", question))
+    if dataset != 'race' or underline_count == 0:
+        qa_cat = " ".join([question, option])
+    elif underline_count == 1:
+        qa_cat = question.replace("_", option)
+    else:
+        qa_cat = ""
+        option_split = option.split(";")
+        question_split = question.split("_")
+        for i in range(len(question_split) - 1):
+            qa_cat += question_split[i] + option_split[i]
+        qa_cat += question_split[-1]
+    return qa_cat
+
+
 # Preprocessing the datasets.
 def prepare_features(examples, tokenizer=None, data_args=None):
     contexts = examples['article']
@@ -171,11 +188,7 @@ def prepare_features(examples, tokenizer=None, data_args=None):
         for j in range(num_choices):
             option = process_text(options[i][j])
 
-            if "_" in question and data_args.dataset == 'race':
-                question = question.replace("_", "")
-                qa_cat = " ".join([question, option])
-            else:
-                qa_cat = " ".join([question, option])
+            qa_cat = concat_question_option(question, option, dataset=data_args.dataset)
             qa_cat = " ".join(whitespace_tokenize(qa_cat)[- data_args.max_qa_length:])
             qa_pairs.append(qa_cat)
         qa_list.append(qa_pairs)
@@ -183,14 +196,10 @@ def prepare_features(examples, tokenizer=None, data_args=None):
     first_sentences = sum(processed_contexts, [])
     second_sentences = sum(qa_list, [])
 
-    if data_args.dataset == "race":
-        truncation_strategy = "only_first"
-    else:
-        truncation_strategy = "longest_first"
     tokenized_examples = tokenizer(
         first_sentences,
         second_sentences,
-        truncation=truncation_strategy,
+        truncation="only_first",
         max_length=data_args.max_seq_length,
         padding="max_length" if data_args.pad_to_max_length else False,
     )
@@ -295,11 +304,7 @@ def prepare_features_for_generate_pseudo_label(examples, tokenizer=None, data_ar
         for j in range(num_choices):
             option = process_text(options[i][j])
 
-            if "_" in question:
-                question = question.replace("_", "")
-                qa_cat = " ".join([question, option])
-            else:
-                qa_cat = " ".join([question, option])
+            qa_cat = concat_question_option(question, option, dataset=data_args.dataset)
 
             # truncated_qa_cat = tokenizer.tokenize(qa_cat, add_special_tokens=False, max_length=data_args.max_qa_length)
             truncated_text_b_id = tokenizer.encode(qa_cat, truncation=True, max_length=data_args.max_qa_length,
@@ -429,11 +434,7 @@ def prepare_features_for_generating_multi_turn_pseudo_label(examples, tokenizer=
             for j in range(4):
                 option = process_text(options[i][j])
 
-                if "_" in question:
-                    question = question.replace("_", "")
-                    qa_cat = " ".join([question, option])
-                else:
-                    qa_cat = " ".join([question, option])
+                qa_cat = concat_question_option(question, option, dataset=data_args.dataset)
                 qa_cat = " ".join(whitespace_tokenize(qa_cat)[- data_args.max_qa_length:])
                 qa_pairs.append(qa_cat)
             qa_list.append(qa_pairs)
@@ -876,11 +877,7 @@ def prepare_features_for_reading_evidence(examples, evidence_logits=None, pseudo
         for j in range(4):
             option = process_text(options[i][j])
 
-            if "_" in question:
-                question = question.replace("_", "")
-                qa_cat = " ".join([question, option])
-            else:
-                qa_cat = " ".join([question, option])
+            qa_cat = concat_question_option(question, option, dataset=data_args.dataset)
             qa_cat = " ".join(whitespace_tokenize(qa_cat)[- data_args.max_qa_length:])
             qa_pairs.append(qa_cat)
         qa_list.append(qa_pairs)
@@ -953,11 +950,7 @@ def prepare_features_for_reading_optionwise_evidence(examples, evidence_logits=N
             for k in range(num_choices):
                 option = process_text(options[i][k])
 
-                if "_" in question:
-                    question = question.replace("_", "")
-                    qa_cat = " ".join([question, option])
-                else:
-                    qa_cat = " ".join([question, option])
+                qa_cat = concat_question_option(question, option, dataset=data_args.dataset)
                 qa_cat = " ".join(whitespace_tokenize(qa_cat)[- data_args.max_qa_length:])
                 qa_pairs.append(qa_cat)
             qa_list.append(qa_pairs)
@@ -1018,11 +1011,7 @@ def prepare_features_for_answer_verifier(
             for j in range(num_choices):
                 option = process_text(options[i][j])
 
-                if "_" in question:
-                    question = question.replace("_", "")
-                    qa_cat = " ".join([question, option])
-                else:
-                    qa_cat = " ".join([question, option])
+                qa_cat = concat_question_option(question, option, dataset=data_args.dataset)
                 qa_cat = " ".join(whitespace_tokenize(qa_cat)[- data_args.max_qa_length:])
                 qa_pairs.append(qa_cat)
         else:
@@ -1154,11 +1143,7 @@ def prepare_features_for_training_answer_verifier(
         if train_answer_verifier_with_option:
             option = process_text(options[i][prediction])
 
-            if "_" in question:
-                question = question.replace("_", "")
-                qa_cat = " ".join([question, option])
-            else:
-                qa_cat = " ".join([question, option])
+            qa_cat = concat_question_option(question, option, dataset=data_args.dataset)
             qa_cat = " ".join(whitespace_tokenize(qa_cat)[- data_args.max_qa_length:])
         else:
             qa_cat = question
@@ -1234,11 +1219,7 @@ def prepare_features_for_training_mc_style_answer_verifier(
         for j in range(4):
             option = process_text(options[i][j])
 
-            if "_" in question:
-                question = question.replace("_", "")
-                qa_cat = " ".join([question, option])
-            else:
-                qa_cat = " ".join([question, option])
+            qa_cat = concat_question_option(question, option, dataset=data_args.dataset)
             qa_cat = " ".join(whitespace_tokenize(qa_cat)[- data_args.max_qa_length:])
             qa_pairs.append(qa_cat)
         qa_list.append(qa_pairs)
