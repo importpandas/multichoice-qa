@@ -207,9 +207,11 @@ def main():
     )
 
     # Data collator
-    data_collator = (
-        default_data_collator if data_args.pad_to_max_length else DataCollatorForMultipleChoice(tokenizer=tokenizer)
-    )
+    if data_args.pad_to_max_length:
+        data_collator = DataCollatorForMultipleChoice(tokenizer=tokenizer, padding='max_length',
+                                                      max_length=data_args.max_seq_length)
+    else:
+        data_collator = DataCollatorForMultipleChoice(tokenizer=tokenizer)
 
     # Initialize our Trainer
     trainer = Trainer(
