@@ -686,14 +686,12 @@ class Trainer:
                             evidence_logits[example_id][idx] = probs[i][idx].item()
         return evidence_logits
 
-    def evaluate_selector_with_explicit_reader(
+    def evaluate_selector_with_reader(
             self,
             evidence_reader,
             eval_dataset,
             feature_func_for_evidence_generating,
             feature_func_for_evidence_reading,
-            evidence_generating_data_collator=None,
-            ignore_keys: Optional[List[str]] = None,
     ) -> Dict[str, float]:
         """
         Run evaluation and returns metrics.
@@ -732,11 +730,12 @@ class Trainer:
         metrics = {}
         all_evidence_sentence = {}
         for evidence_len in [1, 2, 3]:
-            pprepare_feature_func = partial(feature_func_for_evidence_reading, evidence_len=evidence_len,
-                                            evidence_logits=evidence_logits)
+            pprepare_feature_for_evidence_reading = partial(feature_func_for_evidence_reading,
+                                                            evidence_len=evidence_len,
+                                                            evidence_logits=evidence_logits)
             output, evidence_sentence = self.evidence_reading(evidence_reader, eval_dataset,
-                                                              pprepare_feature_func,
-                                                              metric_key_prefix=f'fulleval{evidence_len}')
+                                                              pprepare_feature_for_evidence_reading,
+                                                              metric_key_prefix=f'reader_eval_{evidence_len}')
             all_evidence_sentence[evidence_len] = evidence_sentence
             metrics = {**metrics, **output}
 
@@ -798,6 +797,7 @@ class Trainer:
             merged_results = {f'merge_{ratio}_{k}': v for k, v in compute_mc_metrics(
                 EvalPrediction(predictions=merge_prediction[ratio], label_ids=label_list), all_example_ids=all_example_ids)}
             all_merged_results = {**all_merged_results, **merged_results}
+
 
         metrics = {**evidence_reader_output.metrics, **answer_verifier_output.metrics}
         metrics = {**metrics, **all_merged_results}

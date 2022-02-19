@@ -150,6 +150,15 @@ class AllTrainingArguments(TrainingArguments):
     eval_evidence_selector: bool = field(
         default=False,
         metadata={"help": "Whether to evaluate evidence reader."})
+    eval_evidence_selector: bool = field(
+        default=False,
+        metadata={"help": "Whether to evaluate evidence reader."})
+    eval_selector_with_reader: bool = field(
+        default=False,
+        metadata={"help": "Whether to evaluate evidence selector with explicit evidence reader."})
+    eval_selector_on_exp_race: bool = field(
+        default=False,
+        metadata={"help": "Whether to evaluate evidence selector on Exp RACE set with golden answer prediction"})
     eval_answer_verifier: bool = field(
         default=False,
         metadata={"help": "Whether to evaluate answer verifier."})
@@ -352,16 +361,6 @@ def main():
         selector_trainer.checkpoint_dir = os.path.join(training_args.output_dir, "evidence_selector")
         verifier_trainer.checkpoint_dir = os.path.join(training_args.output_dir, "answer_verifier")
 
-    mc_trainer = Trainer(
-        model=evidence_reader,
-        args=training_args,
-        train_dataset=None,
-        eval_dataset=None,
-        tokenizer=tokenizer,
-        data_collator=DataCollatorForMultipleChoice(tokenizer=tokenizer),
-        compute_metrics=compute_mc_metrics,
-    )
-
     if training_args.eval_answer_verifier:
         multiple_choice_datasets = {k: datasets[k].map(
             pprepare_features_for_multiple_choice,
@@ -396,16 +395,43 @@ def main():
 
     if training_args.eval_evidence_selector:
         logger.info("**** Evaluate Evidence Selector ****")
-        for split in ["validation", "test"]:
-            logger.info(f"*** Evaluate {split} set ***")
-            results = selector_trainer.evaluate(train_evidence_selector_datasets[split]).metrics
-            fulleval_results, all_evidence_sentences = selector_trainer.evaluate_selector_with_explicit_reader(
-                evidence_reader=evidence_reader,
-                eval_dataset=datasets[split],
-                feature_func_for_evidence_reading=pprepare_features_for_reading_optionwise_evidence,
-                feature_func_for_evidence_generating=pprepare_features_for_generating_optionwise_evidence)
 
-            metrics = {**results, **fulleval_results}
+        eval_sets = ["validation", "test"]
+        if training_args.eval_selector_on_exp_race and data_args.dataset == "race":
+            eval_sets.append("exp")
+
+        for split in eval_sets:
+            logger.info(f"*** Evaluate {split} set ***")
+            metrics = {}
+            if split != 'exp':
+                metrics = selector_trainer.evaluate(train_evidence_selector_datasets[split]).metrics
+            if training_args.eval_selector_with_reader:
+                reader_eval_results, all_evidence_sentences = selector_trainer.evaluate_selector_with_reader(
+                    evidence_reader=evidence_reader,
+                    eval_dataset=datasets[split],
+                    feature_func_for_evidence_reading=pprepare_features_for_reading_optionwise_evidence,
+                    feature_func_for_evidence_generating=pprepare_features_for_generating_optionwise_evidence)
+                metrics = {**metrics, **reader_eval_results}
+                output_evidence_file = os.path.join(training_args.output_dir, f"{split}_evidence.json")
+                with open(output_evidence_file, "w") as f:
+                    json.dump(all_evidence_sentences, f)
+
+                if split == "exp":
+                    ground_truth_file = json.load(open(data_args.exp_race_file, 'rb'))
+                    prediction_file = {}
+                    for example in datasets["exp"]:
+                        eid = example['example_id']
+                        golden_option = ord(example['answer']) - ord("A")
+                        pred_evidence = all_evidence_sentences['1'][eid + '_' + str(golden_option)]
+                        prediction_file[eid] = {"answer": example['answer'], "evidence": pred_evidence}
+                    all_f1, ans_f1, evi_f1, total_count, skip_count = evaluate_multi_choice(ground_truth_file,
+                                                                                            prediction_file)
+                    metrics[f"all_f1"] = all_f1
+                    metrics[f"ans_f1"] = ans_f1
+                    metrics[f"evi_f1"] = evi_f1
+                    metrics[f"total_count"] = total_count
+                    metrics[f"skip_count"] = skip_count
+
             output_eval_file = os.path.join(training_args.output_dir, f"{split}_selector_results.txt")
             with open(output_eval_file, "a+") as writer:
                 logger.info("***** Evidence Selector Eval results *****")
@@ -413,9 +439,7 @@ def main():
                     logger.info(f"{key} = {value:.3f}")
                     writer.write(f"{key} = {value:.3f}\n")
 
-            output_evidence_file = os.path.join(training_args.output_dir, f"{split}_evidence.json")
-            with open(output_evidence_file, "w") as f:
-                json.dump(all_evidence_sentences, f)
+
 
     # generate evidence logits
     if training_args.train_answer_verifier:
@@ -476,7 +500,7 @@ def main():
 
         train_result = verifier_trainer.train()
 
-        output_train_file = os.path.join(training_args.output_dir, "verifier_train_results.txt")
+        output_train_file = os.path.join(training_args.output_dir, "train_verifier_results.txt")
         with open(output_train_file, "a+") as writer:
             logger.info("***** Verifier Train results *****")
             writer.write("***** Verifier Train results *****")
