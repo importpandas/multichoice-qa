@@ -149,10 +149,11 @@ def get_orig_chars_to_bounded_chars_mapping(tokens_char_span, total_len):
 
 
 def concat_question_option(question, option, dataset='dream'):
+    orig_question = question
     question = re.sub("(_+)", "_", question)
     underline_count = len(re.findall("_", question))
-    if dataset != 'race' or underline_count == 0:
-        qa_cat = " ".join([question, option])
+    if dataset == 'dream' or underline_count == 0:
+        qa_cat = " ".join([orig_question, option])
     elif underline_count == 1:
         qa_cat = question.replace("_", option)
     else:
