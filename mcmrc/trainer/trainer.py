@@ -194,7 +194,7 @@ class Trainer:
                         depth = self.model.config.num_hidden_layers
                     params_group['lr'] = self.learning_rate * \
                                          (self.layerwise_lr_decay ** (self.model.config.num_hidden_layers - depth))
-            optimizer_grouped_parameters.append(params_group)
+                optimizer_grouped_parameters.append(params_group)
 
         optimizer = AdamW(optimizer_grouped_parameters, lr=self.learning_rate, eps=self.adam_epsilon)
 
