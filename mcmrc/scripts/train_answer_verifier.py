@@ -156,15 +156,12 @@ class AllTrainingArguments(TrainingArguments):
     eval_selector_with_reader: bool = field(
         default=False,
         metadata={"help": "Whether to evaluate evidence selector with explicit evidence reader."})
-    eval_selector_on_exp_race: bool = field(
-        default=False,
-        metadata={"help": "Whether to evaluate evidence selector on Exp RACE set with golden answer prediction"})
     eval_answer_verifier: bool = field(
         default=False,
         metadata={"help": "Whether to evaluate answer verifier."})
     eval_on_exp_race: bool = field(
         default=False,
-        metadata={"help": "Whether to evaluate answer verifier on Exp RACE dev set."})
+        metadata={"help": "Whether to evaluate answer verifier or evidence selector on Exp RACE dev set."})
     eval_on_adv_race: bool = field(
         default=False,
         metadata={"help": "Whether to evaluate answer  on AdvRACE set."})
@@ -227,6 +224,9 @@ def main():
 
     if training_args.eval_on_exp_race and data_args.exp_race_file is None and data_args.dataset == 'race':
         raise ValueError("exp_race_file must be specified")
+
+    if training_args.eval_selector_with_reader and model_args.evidence_reader_path == "":
+        raise ValueError("Evidence reader path must be specified to evaluate evidence selector")
 
     if data_args.dataset == 'dream':
         training_args.eval_on_exp_race = False
@@ -377,7 +377,7 @@ def main():
             num_proc=data_args.preprocessing_num_workers,
             remove_columns=column_names,
             load_from_cache_file=not data_args.overwrite_cache,
-        ) for k in datasets.keys() if k != "train" or training_args.train_evidence_selector}
+        ) for k in datasets.keys() if (k != "train" or training_args.train_evidence_selector) and k != 'exp'}
 
     if training_args.train_evidence_selector:
         logger.info("**** Train Evidence Selector ****")
@@ -396,14 +396,13 @@ def main():
     if training_args.eval_evidence_selector:
         logger.info("**** Evaluate Evidence Selector ****")
 
-        eval_sets = ["validation", "test"]
-        if training_args.eval_selector_on_exp_race and data_args.dataset == "race":
-            eval_sets.append("exp")
-
-        for split in eval_sets:
+        for split in datasets.keys():
+            if split in ['train', 'test', 'validation']:
+                continue
             logger.info(f"*** Evaluate {split} set ***")
-            metrics = {}
-            if split != 'exp':
+            if split == 'exp':
+                metrics = {}
+            else:
                 metrics = selector_trainer.evaluate(train_evidence_selector_datasets[split]).metrics
             if training_args.eval_selector_with_reader:
                 reader_eval_results, all_evidence_sentences = selector_trainer.evaluate_selector_with_reader(
@@ -422,7 +421,7 @@ def main():
                     for example in datasets["exp"]:
                         eid = example['example_id']
                         golden_option = ord(example['answer']) - ord("A")
-                        pred_evidence = all_evidence_sentences['1'][eid + '_' + str(golden_option)]
+                        pred_evidence = all_evidence_sentences[1][eid + '_' + str(golden_option)]
                         prediction_file[eid] = {"answer": example['answer'], "evidence": pred_evidence}
                     all_f1, ans_f1, evi_f1, total_count, skip_count = evaluate_multi_choice(ground_truth_file,
                                                                                             prediction_file)

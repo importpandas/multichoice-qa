@@ -165,27 +165,35 @@ class Trainer:
 
     def _build_optimizer(self):
         # Local optimizer
-        no_decay = ["bias", "LayerNorm.weight", 'gamma', 'beta']
+        no_decay = ["bias", "LayerNorm.weight"]
         large_lr = ['classifier']
-        optimizer_grouped_parameters = []
-        for n, p in self.model.named_parameters():
-            params_group = {}
-            params_group['params'] = p
-            params_group['weight_decay'] = 0.0 if any(nd in n for nd in no_decay) or any(
-                ll in n for ll in large_lr) else self.weight_decay
-            if any(ll in n for ll in large_lr):
-                params_group['lr'] = 1e-3
-            else:
-                if 'electra.embedding' in n or 'bert.embedding' in n:
-                    depth = 0
-                elif 'electra.encoder.layer' in n:  # electra
-                    depth = int(re.search(r"electra.encoder.layer.(\d+)", n).group(1)) + 1
-                elif 'bert.encoder.layer' in n:  # bert, roberta-wwm-ext
-                    depth = int(re.search(r"bert.encoder.layer.(\d+)", n).group(1)) + 1
+        if self.layerwise_lr_decay == 1:
+            optimizer_grouped_parameters = [
+                {'params': [p for n, p in self.model.named_parameters() if not any(nd in n for nd in no_decay)],
+                 'weight_decay': self.weight_decay},
+                {'params': [p for n, p in self.model.named_parameters() if any(nd in n for nd in no_decay)],
+                 'weight_decay': 0.0}
+            ]
+        else:
+            optimizer_grouped_parameters = []
+            for n, p in self.model.named_parameters():
+                params_group = {}
+                params_group['params'] = p
+                params_group['weight_decay'] = 0.0 if any(nd in n for nd in no_decay) or any(
+                    ll in n for ll in large_lr) else self.weight_decay
+                if any(ll in n for ll in large_lr):
+                    params_group['lr'] = max(1e-3, self.learning_rate)
                 else:
-                    depth = self.model.config.num_hidden_layers
-                params_group['lr'] = self.learning_rate * \
-                                     (self.layerwise_lr_decay ** (self.model.config.num_hidden_layers - depth))
+                    if 'electra.embedding' in n or 'bert.embedding' in n:
+                        depth = 0
+                    elif 'electra.encoder.layer' in n:  # electra
+                        depth = int(re.search(r"electra.encoder.layer.(\d+)", n).group(1)) + 1
+                    elif 'bert.encoder.layer' in n:  # bert, roberta-wwm-ext
+                        depth = int(re.search(r"bert.encoder.layer.(\d+)", n).group(1)) + 1
+                    else:
+                        depth = self.model.config.num_hidden_layers
+                    params_group['lr'] = self.learning_rate * \
+                                         (self.layerwise_lr_decay ** (self.model.config.num_hidden_layers - depth))
             optimizer_grouped_parameters.append(params_group)
 
         optimizer = AdamW(optimizer_grouped_parameters, lr=self.learning_rate, eps=self.adam_epsilon)

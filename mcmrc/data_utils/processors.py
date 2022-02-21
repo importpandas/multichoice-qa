@@ -69,7 +69,7 @@ def load_exp_race_data(exp_race_file):
                 all_examples["question"].append(question)
                 all_examples["answer"].append(answer)
                 all_examples["options"].append(option)
-                # if len(all_examples["example_id"]) > 2:
+                # if len(all_examples["example_id"]) > 4:
                 #     return all_examples
     print(f"total {len(all_examples['example_id'])} less {less_option_num}")
     return all_examples
@@ -149,6 +149,7 @@ def get_orig_chars_to_bounded_chars_mapping(tokens_char_span, total_len):
 
 
 def concat_question_option(question, option, dataset='dream'):
+    question = re.sub("(_+)", "_", question)
     underline_count = len(re.findall("_", question))
     if dataset != 'race' or underline_count == 0:
         qa_cat = " ".join([question, option])
