@@ -397,7 +397,7 @@ def main():
         logger.info("**** Evaluate Evidence Selector ****")
 
         for split in datasets.keys():
-            if split in ['train', 'test', 'validation']:
+            if split in ['train']:
                 continue
             logger.info(f"*** Evaluate {split} set ***")
             if split == 'exp':
