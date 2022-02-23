@@ -33,7 +33,6 @@ import transformers
 from transformers import (
     AutoConfig,
     AutoTokenizer,
-    AutoModelForMultipleChoice,
     HfArgumentParser,
     TrainingArguments,
     default_data_collator,
@@ -134,6 +133,11 @@ def main():
         raise ValueError("Dataset should be race or dream.")
     else:
         from mcmrc.data_utils.processors import prepare_features
+
+    if data_args.dataset == 'dream':
+        from ..model.auto_model import AutoModelForMultipleChoice
+    else:
+        from transformers import AutoModelForMultipleChoice
 
     # In distributed training, the load_dataset function guarantee that only one local process can concurrently
     # download the dataset.

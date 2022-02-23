@@ -38,11 +38,10 @@ def hyperparam_path_for_two_stage_evidence_selector(model_args, data_args, train
     exp_name += f'__max_evi_seq_len_{data_args.max_evidence_seq_length}'
     exp_name += f'__max_seq_len_{data_args.max_seq_length}'
     if training_args.train_evidence_selector:
-        if hasattr(training_args, "num_train_selector_epochs"):
-            exp_name += f'__sel_epochs_{training_args.num_train_selector_epochs}'
-        else:
-            exp_name += f'__sel_epochs_{training_args.num_train_epochs}'
+        exp_name += f'__sel_epochs_{training_args.num_train_selector_epochs}'
         exp_name += f'__evi_sam_num_{data_args.evidence_sampling_num}'
+        exp_name += f'__neg_sam_ratio_{data_args.negative_sampling_ratio}'
+        exp_name += f'__hard_sam_{data_args.hard_negative_sampling}'
     if training_args.train_answer_verifier:
         if not training_args.train_evidence_selector:
             exp_name += f'__evi_sam_num_{data_args.evidence_sampling_num}'
