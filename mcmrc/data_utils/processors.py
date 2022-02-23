@@ -58,6 +58,7 @@ def load_exp_race_data(exp_race_file):
             article_sent_start = [sent.start_char for sent in doc.sents]
             for i in range(len(questions)):
                 question = questions[i]
+                question = re.sub("(_+ _+)", "_", question)
                 answer = answers[i]
                 option = options[i]
                 if len(option) < 4:
@@ -155,14 +156,17 @@ def concat_question_option(question, option, dataset='dream'):
     if dataset == 'dream' or underline_count == 0:
         qa_cat = " ".join([orig_question, option])
     elif underline_count == 1:
-        qa_cat = question.replace("_", option)
+        qa_cat = question.replace("_", " " + option + " ", 1)
     else:
         qa_cat = ""
-        option_split = option.split(";")
+        option_split = list(filter(lambda x: x.strip(), option.split(";")))
         question_split = question.split("_")
-        for i in range(len(question_split) - 1):
-            qa_cat += question_split[i] + option_split[i]
-        qa_cat += question_split[-1]
+        if len(question_split) != len(option_split) + 1:
+            qa_cat = " ".join([question, option])
+        else:
+            for i in range(len(question_split) - 1):
+                qa_cat += question_split[i] + option_split[i]
+            qa_cat += question_split[-1]
     return qa_cat
 
 
@@ -636,8 +640,13 @@ def prepare_features_for_initializing_simple_evidence_selector(examples, evidenc
     return tokenized_examples
 
 
-def prepare_features_for_initializing_evidence_selector(examples, evidence_sampling_num=2, tokenizer=None,
-                                                                  data_args=None, pseudo_label_path=""):
+def prepare_features_for_initializing_evidence_selector(examples,
+                                                        evidence_sampling_num=2,
+                                                        negative_sampling_ratio=1.0,
+                                                        hard_negative_sampling=False,
+                                                        tokenizer=None,
+                                                        data_args=None,
+                                                        pseudo_label_path=""):
     contexts = examples['article']
     answers = examples['answer']
     options = examples['options']
@@ -674,6 +683,8 @@ def prepare_features_for_initializing_evidence_selector(examples, evidence_sampl
         per_example_sent_starts = sent_starts[i]
         per_example_sent_starts.append(len(full_context))
 
+        hard_examples_num = 0 if not hard_negative_sampling else int(evidence_sampling_num * negative_sampling_ratio)
+
         for evidence_sent_idx in per_example_evidence_sent_idxs:
             sent_start = per_example_sent_starts[evidence_sent_idx]
             sent_end = per_example_sent_starts[evidence_sent_idx + 1]
@@ -687,10 +698,24 @@ def prepare_features_for_initializing_evidence_selector(examples, evidence_sampl
             qa_list.append(qa_concat)
             labels.append(1)
 
+            if hard_examples_num > 0:
+                disturb_option_for_evidence = np.argmax(per_example_options_prob_diff[evidence_sent_idx])
+                option = process_text(options[i][disturb_option_for_evidence])
+                qa_concat = processed_question + "[SEP]"
+                qa_concat += option
+
+                processed_contexts.append(evidence_sent)
+                qa_list.append(qa_concat)
+                labels.append(0)
+                hard_examples_num -= 1
+
         all_irre_sent_idxs = list(filter(lambda x: x not in per_example_evidence_sent_idxs,
                                          list(range(len(per_example_sent_starts) - 1))))
-        negative_sent_num = evidence_sampling_num if evidence_sampling_num <= len(all_irre_sent_idxs) else len(
-            all_irre_sent_idxs)
+        if evidence_sampling_num * negative_sampling_ratio <= len(all_irre_sent_idxs):
+            negative_sent_num = int(evidence_sampling_num * negative_sampling_ratio)
+        else:
+            negative_sent_num = len(all_irre_sent_idxs)
+
         irre_options = random.sample(list(range(num_choices)), negative_sent_num)
         for idx, irre_sent_idx in enumerate(random.sample(all_irre_sent_idxs, negative_sent_num)):
             sent_start = per_example_sent_starts[irre_sent_idx]

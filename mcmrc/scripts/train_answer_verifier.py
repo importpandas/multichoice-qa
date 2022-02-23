@@ -110,6 +110,18 @@ class DataTrainingArguments(BasicDataTrainingArguments):
             "help": "number of sentences of each evidence"
         },
     )
+    negative_sampling_ratio: float = field(
+        default=1.0,
+        metadata={
+            "help": "The ratio of sampled negative examples to positive examples for training evidence selector"
+        },
+    )
+    hard_negative_sampling: bool = field(
+        default=False,
+        metadata={
+            "help": "Whether to use hard negative examples for training evidence selector"
+        },
+    )
     verifier_evidence_len: int = field(
         default=2,
         metadata={
@@ -309,6 +321,8 @@ def main():
     pprepare_features_for_initializing_evidence_selector = partial(
         prepare_features_for_initializing_evidence_selector,
         evidence_sampling_num=data_args.evidence_sampling_num,
+        negative_sampling_ratio=data_args.negative_sampling_ratio,
+        hard_negative_sampling=data_args.hard_negative_sampling,
         tokenizer=tokenizer,
         data_args=data_args,
         pseudo_label_path=data_args.pseudo_label_path)
