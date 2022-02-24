@@ -134,11 +134,6 @@ def main():
     else:
         from mcmrc.data_utils.processors import prepare_features
 
-    if data_args.dataset == 'dream':
-        from ..model.auto_model import AutoModelForMultipleChoice
-    else:
-        from transformers import AutoModelForMultipleChoice
-
     # In distributed training, the load_dataset function guarantee that only one local process can concurrently
     # download the dataset.
     # See more about loading any type of standard or custom dataset (from files, python dict, pandas DataFrame, etc) at
@@ -189,6 +184,11 @@ def main():
         cache_dir=model_args.cache_dir,
         use_fast=model_args.use_fast_tokenizer,
     )
+    if data_args.dataset == 'dream' and type(config).__name__ == "AlbertConfig":
+        from ..model.auto_model import AutoModelForMultipleChoice
+    else:
+        from transformers import AutoModelForMultipleChoice
+
     model = AutoModelForMultipleChoice.from_pretrained(
         model_args.model_name_or_path,
         from_tf=bool(".ckpt" in model_args.model_name_or_path),
