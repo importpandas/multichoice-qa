@@ -29,7 +29,7 @@ from torch.utils.data.dataloader import DataLoader
 from torch.utils.data.sampler import SequentialSampler
 import tqdm
 
-from datasets import load_dataset, ReadInstruction
+from datasets import load_dataset, ReadInstruction, Dataset
 from functools import partial
 
 import transformers
@@ -46,6 +46,9 @@ from utils.utils_distributed_training import is_main_process
 from ..data_utils.collator import DataCollatorForGeneratingEvidenceLabel
 from ..cli.argument import BasicModelArguments, BasicDataTrainingArguments
 
+from mcmrc.data_utils.processors import (
+    load_exp_race_data
+)
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +60,10 @@ class DataTrainingArguments(BasicDataTrainingArguments):
     """
     debug_mode:  bool = field(
         default=False, metadata={"help": "whether to load a subset of data for debug"}
+    )
+    exp_race_file: Optional[str] = field(
+        default=None,
+        metadata={"help": "An optional input evaluation data file to evaluate model on exp_race_file"},
     )
 
 
@@ -108,6 +115,7 @@ def main():
     # In distributed training, the load_dataset function guarantee that only one local process can concurrently
     # download the dataset.
 
+
     if data_args.debug_mode:
         datasets = load_dataset(data_args.dataload_script, data_args.dataload_split,
                                 data_dir=data_args.data_dir,
@@ -117,6 +125,9 @@ def main():
     else:
         datasets = load_dataset(data_args.dataload_script, data_args.dataload_split,
                                 data_dir=data_args.data_dir)
+
+    if data_args.dataset == 'dream':
+        datasets['exp'] = Dataset.from_dict(load_exp_race_data(data_args.exp_race_file))
 
     # See more about loading any type of standard or custom dataset (from files, python dict, pandas DataFrame, etc) at
     # https://huggingface.co/docs/datasets/loading_datasets.html.
