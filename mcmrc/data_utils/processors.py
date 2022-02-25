@@ -676,16 +676,19 @@ def prepare_features_for_initializing_evidence_selector(examples,
 
         evidence_sampling_num = evidence_sampling_num if evidence_sampling_num <= len(
             pseudo_logit[example_id]) else len(pseudo_logit[example_id])
-        per_example_evidence_sent_idxs = sorted(pseudo_logit[example_id].keys(),
-                                                key=lambda x: abs(pseudo_logit[example_id][x]), reverse=True)[
-                                         : evidence_sampling_num]
+        send_idxs_sorted_by_importance = sorted(pseudo_logit[example_id].keys(),
+                                                key=lambda x: abs(pseudo_logit[example_id][x]), reverse=True)
 
         per_example_sent_starts = sent_starts[i]
         per_example_sent_starts.append(len(full_context))
 
-        hard_examples_num = 0 if not hard_negative_sampling else int(evidence_sampling_num * negative_sampling_ratio)
+        hard_sampling_num = evidence_sampling_num * negative_sampling_ratio if hard_negative_sampling else 0
+        if 0 < hard_sampling_num < 1 and random.random() > hard_sampling_num:
+            hard_sampling_num = 1
+        else:
+            hard_sampling_num = int(hard_sampling_num)
 
-        for evidence_sent_idx in per_example_evidence_sent_idxs:
+        for evidence_sent_idx in send_idxs_sorted_by_importance[: evidence_sampling_num]:
             sent_start = per_example_sent_starts[evidence_sent_idx]
             sent_end = per_example_sent_starts[evidence_sent_idx + 1]
             evidence_sent = full_context[sent_start: sent_end]
@@ -698,7 +701,7 @@ def prepare_features_for_initializing_evidence_selector(examples,
             qa_list.append(qa_concat)
             labels.append(1)
 
-            if hard_examples_num > 0:
+            if hard_sampling_num >= 1:
                 disturb_option_for_evidence = np.argmax(per_example_options_prob_diff[evidence_sent_idx])
                 option = process_text(options[i][disturb_option_for_evidence])
                 qa_concat = processed_question + "[SEP]"
@@ -707,27 +710,32 @@ def prepare_features_for_initializing_evidence_selector(examples,
                 processed_contexts.append(evidence_sent)
                 qa_list.append(qa_concat)
                 labels.append(0)
-                hard_examples_num -= 1
+                hard_sampling_num -= 1
 
-        all_irre_sent_idxs = list(filter(lambda x: x not in per_example_evidence_sent_idxs,
+        all_irre_sent_idxs = list(filter(lambda x: x not in send_idxs_sorted_by_importance[:2],
                                          list(range(len(per_example_sent_starts) - 1))))
         if evidence_sampling_num * negative_sampling_ratio <= len(all_irre_sent_idxs):
-            negative_sent_num = int(evidence_sampling_num * negative_sampling_ratio)
+            negative_sent_num = evidence_sampling_num * negative_sampling_ratio
+            if 0 < negative_sent_num < 1 and random.random() > negative_sent_num:
+                negative_sent_num = 1
+            else:
+                negative_sent_num = int(negative_sent_num)
         else:
             negative_sent_num = len(all_irre_sent_idxs)
 
-        irre_options = random.sample(list(range(num_choices)), negative_sent_num)
-        for idx, irre_sent_idx in enumerate(random.sample(all_irre_sent_idxs, negative_sent_num)):
-            sent_start = per_example_sent_starts[irre_sent_idx]
-            sent_end = per_example_sent_starts[irre_sent_idx + 1]
-            irre_sent = full_context[sent_start: sent_end]
-            option = process_text(options[i][irre_options[idx]])
-            qa_concat = processed_question + "[SEP]"
-            qa_concat += option
+        if negative_sent_num >= 1:
+            irre_options = random.sample(list(range(num_choices)), negative_sent_num)
+            for idx, irre_sent_idx in enumerate(random.sample(all_irre_sent_idxs, negative_sent_num)):
+                sent_start = per_example_sent_starts[irre_sent_idx]
+                sent_end = per_example_sent_starts[irre_sent_idx + 1]
+                irre_sent = full_context[sent_start: sent_end]
+                option = process_text(options[i][irre_options[idx]])
+                qa_concat = processed_question + "[SEP]"
+                qa_concat += option
 
-            processed_contexts.append(irre_sent)
-            qa_list.append(qa_concat)
-            labels.append(0)
+                processed_contexts.append(irre_sent)
+                qa_list.append(qa_concat)
+                labels.append(0)
 
     tokenized_examples = tokenizer(
         processed_contexts,
