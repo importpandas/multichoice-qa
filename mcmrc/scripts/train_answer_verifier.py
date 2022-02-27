@@ -455,18 +455,17 @@ def main():
 
 
     # generate evidence logits
-    if training_args.train_answer_verifier:
-        evidence_logits = {
-            k: selector_trainer.evidence_generating(v, pprepare_features_for_generating_optionwise_evidence) for k, v
-            in datasets.items()}
-    elif training_args.eval_answer_verifier:
-        evidence_logits = {
-            k: selector_trainer.evidence_generating(v, pprepare_features_for_generating_optionwise_evidence)
-            for k, v in datasets.items() if k != "train"}
-
-    output_evidence_logits_file = os.path.join(training_args.output_dir, f"evidence_logits.json")
-    with open(output_evidence_logits_file, "w") as f:
-        json.dump(evidence_logits, f)
+    if training_args.train_answer_verifier or training_args.eval_answer_verifier:
+        evidence_logits_file = os.path.join(model_args.evidence_selector_path, f"evidence_logits.json")
+        if os.path.exists(evidence_logits_file):
+            logger.info("Loading evidence logits from cached file %s", evidence_logits_file)
+            evidence_logits = json.load(open(evidence_logits_file, 'rb'))
+        else:
+            evidence_logits = {
+                k: selector_trainer.evidence_generating(v, pprepare_features_for_generating_optionwise_evidence) for k, v
+                in datasets.items()}
+            with open(evidence_logits_file, "w") as f:
+                json.dump(evidence_logits, f)
 
     # prepare features for answer verifier
     if training_args.train_answer_verifier or training_args.eval_answer_verifier:
