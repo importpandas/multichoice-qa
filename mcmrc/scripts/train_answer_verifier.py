@@ -30,7 +30,6 @@ from objprint import add_objprint
 from transformers import (
     AutoConfig,
     AutoModelForSequenceClassification,
-    AutoModelForMultipleChoice,
     AutoTokenizer,
     HfArgumentParser,
     TrainingArguments,
@@ -129,7 +128,7 @@ class DataTrainingArguments(BasicDataTrainingArguments):
         },
     )
     train_verifier_with_option: bool = field(
-        default=False,
+        default=True,
         metadata={
             "help": "Whether to train answer verifier with question-option pair"
         },
@@ -242,6 +241,7 @@ def main():
 
     if data_args.dataset == 'dream':
         training_args.eval_on_exp_race = False
+        training_args.eval_on_adv_race = False
 
     # In distributed training, the load_dataset function guarantee that only one local process can concurrently
     # download the dataset.
@@ -296,6 +296,11 @@ def main():
         evidence_reader_path,
         cache_dir=model_args.cache_dir,
     )
+
+    if data_args.dataset == 'dream' and type(evidence_reader_config).__name__ == "AlbertConfig":
+        from ..model.auto_model import AutoModelForMultipleChoice
+    else:
+        from transformers import AutoModelForMultipleChoice
 
     evidence_selector = AutoModelForSequenceClassification.from_pretrained(
         evidence_selector_path,
@@ -486,14 +491,14 @@ def main():
                 load_from_cache_file=not data_args.overwrite_cache,
             )
 
-            evidence_sentences = {eid: [[(logit, sent) for sent, logit in zip(option_sents, option_logits)]
+            evidence_sentences_split = {eid: [[(logit, sent) for sent, logit in zip(option_sents, option_logits)]
                                         for option_sents, option_logits in zip(evidence_sent, evidence_logit)]
                                         for eid, evidence_sent, evidence_logit in
                                   zip(verifier_dataset['example_ids'],
                                       verifier_dataset['evidence_sentence'],
                                       verifier_dataset['evidence_logit'])}
             train_answer_verifier_datasets[split] = verifier_dataset.remove_columns(["evidence_sentence", "evidence_logit"])
-            evidence_sentences[split] = evidence_sentences
+            evidence_sentences[split] = evidence_sentences_split
 
         output_evidence_file = os.path.join(training_args.output_dir, f"all_evidence.json")
         with open(output_evidence_file, "w") as f:
