@@ -17,6 +17,7 @@ Fine-tuning the library models for multiple choice.
 """
 # You can also adapt this script on your own multiple choice task. Pointers for this are left as comments.
 import json
+import pickle
 import os
 import sys
 import logging
@@ -251,9 +252,9 @@ def main():
     if data_args.debug_mode:
         datasets = load_dataset(data_args.dataload_script, data_args.dataload_split,
                                 data_dir=data_args.data_dir,
-                                split={'train': ReadInstruction('train', from_=0, to=5, unit='abs'),
-                                       'validation': ReadInstruction('validation', from_=0, to=5, unit='abs'),
-                                       'test': ReadInstruction('test', from_=0, to=5, unit='abs')})
+                                split={'train': ReadInstruction('train', from_=0, to=1, unit='abs'),
+                                       'validation': ReadInstruction('validation', from_=0, to=1, unit='abs'),
+                                       'test': ReadInstruction('test', from_=0, to=1, unit='abs')})
     else:
         datasets = load_dataset(data_args.dataload_script, data_args.dataload_split,
                                 data_dir=data_args.data_dir)
@@ -461,16 +462,16 @@ def main():
 
     # generate evidence logits
     if training_args.train_answer_verifier or training_args.eval_answer_verifier:
-        evidence_logits_file = os.path.join(model_args.evidence_selector_path, f"evidence_logits.json")
+        evidence_logits_file = os.path.join(model_args.evidence_selector_path, f"evidence_logits.pickle")
         if os.path.exists(evidence_logits_file):
             logger.info("Loading evidence logits from cached file %s", evidence_logits_file)
-            evidence_logits = json.load(open(evidence_logits_file, 'rb'))
+            evidence_logits = pickle.load(open(evidence_logits_file, 'rb'))
         else:
             evidence_logits = {
                 k: selector_trainer.evidence_generating(v, pprepare_features_for_generating_optionwise_evidence) for k, v
                 in datasets.items()}
-            with open(evidence_logits_file, "w") as f:
-                json.dump(evidence_logits, f)
+            with open(evidence_logits_file, "wb") as f:
+                pickle.dump(evidence_logits, f)
 
     # prepare features for answer verifier
     if training_args.train_answer_verifier or training_args.eval_answer_verifier:

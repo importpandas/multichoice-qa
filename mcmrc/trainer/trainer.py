@@ -803,7 +803,7 @@ class Trainer:
         all_merged_results = {}
         for ratio in merge_ratio:
             merged_results = {f'merge_{ratio}_{k}': v for k, v in compute_mc_metrics(
-                EvalPrediction(predictions=merge_prediction[ratio], label_ids=label_list), all_example_ids=all_example_ids)}
+                EvalPrediction(predictions=merge_prediction[ratio], label_ids=label_list), all_example_ids=all_example_ids).items()}
             all_merged_results = {**all_merged_results, **merged_results}
 
 
