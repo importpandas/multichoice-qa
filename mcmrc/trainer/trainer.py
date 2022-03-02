@@ -766,12 +766,18 @@ class Trainer:
             metric_key_prefix="evidence_reader",
             compute_metrics=compute_mc_metrics)
         self.model = _model
+        logger.info("reader results")
+        for key, value in sorted(evidence_reader_output.metrics.items()):
+            logger.info(f"{key} = {value:.3f}")
 
         answer_verifier_output = self.evaluate(
             answer_verifier_dataset,
             description="Evaluation",
             metric_key_prefix="intensive_selector",
             compute_metrics=compute_mc_metrics)
+        logger.info("verifier output")
+        for key, value in sorted(answer_verifier_output.metrics.items()):
+            logger.info(f"{key} = {value:.3f}")
 
         evidence_reader_predictions = {}
         answer_verifier_predictions = {}

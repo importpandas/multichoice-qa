@@ -206,7 +206,7 @@ def prepare_features(examples, tokenizer=None, data_args=None):
         first_sentences,
         second_sentences,
         truncation="only_first",
-        max_length=data_args.max_seq_length,
+        max_length=512,
         padding="max_length" if data_args.pad_to_max_length else False,
     )
     tokenized_examples = {k: [v[i: i + num_choices] for i in range(0, len(v), num_choices)] for k, v in tokenized_examples.items()}
