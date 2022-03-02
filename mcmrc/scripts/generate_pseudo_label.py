@@ -125,7 +125,7 @@ def main():
         datasets = load_dataset(data_args.dataload_script, data_args.dataload_split,
                                 data_dir=data_args.data_dir)
 
-    if data_args.dataset == 'dream':
+    if data_args.dataset == 'race':
         datasets['exp'] = Dataset.from_dict(load_exp_race_data(data_args.exp_race_file))
 
     # See more about loading any type of standard or custom dataset (from files, python dict, pandas DataFrame, etc) at
