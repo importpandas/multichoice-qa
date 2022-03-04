@@ -260,13 +260,27 @@ def main():
                                 data_dir=data_args.data_dir)
 
     if training_args.eval_on_exp_race:
-        datasets['exp'] = Dataset.from_dict(load_exp_race_data(data_args.exp_race_file))
+        cached_exp_features_file = os.path.join("cached_features", "cached_exp_features")
+        if os.path.exists(cached_exp_features_file):
+            datasets['exp'] = torch.load(cached_exp_features_file)
+        else:
+            datasets['exp'] = Dataset.from_dict(load_exp_race_data(data_args.exp_race_file))
+            if training_args.local_rank in [-1, 0]:
+                logger.info("Saving exp features into cached file %s", cached_exp_features_file)
+                torch.save(datasets['exp'], cached_exp_features_file)
 
     if training_args.eval_on_adv_race:
         for subset in os.listdir(data_args.adv_race_path):
-            datasets[subset] = Dataset.from_dict(load_adv_race_data(os.path.join(data_args.adv_race_path, subset, "test_dis.json")))
+            cached_features_file = os.path.join("cached_features", f"cached_{subset}_features")
+            if os.path.exists(cached_features_file):
+                datasets[subset] = torch.load(cached_features_file)
+            else:
+                datasets[subset] = Dataset.from_dict(load_adv_race_data(os.path.join(data_args.adv_race_path, subset, "test_dis.json")))
+                if training_args.local_rank in [-1, 0]:
+                    logger.info(f"Saving {subset} features into cached file %s", cached_features_file)
+                    torch.save(datasets[subset], cached_features_file)
 
-
+    logger.info("finished loading data")
 
     # Load pretrained model and tokenizer
 
