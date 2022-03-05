@@ -2,7 +2,7 @@ import torch
 import numpy as np
 from sklearn.metrics import f1_score
 from typing import Any, Dict, NamedTuple, Optional, Tuple, Union
-
+from collections import OrderedDict
 
 def to_list(tensor):
     return tensor.detach().cpu().tolist()
@@ -38,8 +38,8 @@ def compute_mc_metrics(eval_predictions, mask=None, all_example_ids=None):
             assert sum(high_set_mask) + sum(middle_set_mask) == len(all_example_ids)
             high_set_acc = (((preds == label_ids) & np.array(high_set_mask)).sum() / np.array(high_set_mask).sum()) * 100
             middle_set_acc = (((preds == label_ids) & np.array(middle_set_mask)).sum() / np.array(middle_set_mask).sum()) * 100
-            return {"accuracy": acc, 'high_accuracy': high_set_acc, 'middle_accuracy': middle_set_acc}
-    return {"accuracy": acc}
+            return OrderedDict([("accuracy", acc), ('high_accuracy', high_set_acc), ('middle_accuracy', middle_set_acc)])
+    return OrderedDict([("accuracy", acc)])
 
 
 def compute_classification_metrics(eval_predictions):

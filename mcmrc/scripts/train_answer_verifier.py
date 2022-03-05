@@ -27,6 +27,7 @@ import torch.cuda
 from datasets import load_dataset, ReadInstruction, Dataset
 from functools import partial
 from objprint import add_objprint
+from collections import OrderedDict
 
 from transformers import (
     AutoConfig,
@@ -125,7 +126,7 @@ class DataTrainingArguments(BasicDataTrainingArguments):
     verifier_evidence_len: int = field(
         default=2,
         metadata={
-            "help": "number of sentences of each evidence"
+            "help": "number of evidence sentences for each choice during evidence competition "
         },
     )
     train_verifier_with_option: bool = field(
@@ -423,7 +424,7 @@ def main():
         with open(output_train_file, "w") as writer:
             logger.info("***** Evidence selector train results *****")
             writer.write("***** Evidence selector train results *****")
-            for key, value in sorted(train_result.metrics.items()):
+            for key, value in train_result.metrics.items():
                 logger.info(f"{key} = {value:.3f}")
                 writer.write(f"{key} = {value:.3f}\n")
 
@@ -435,7 +436,7 @@ def main():
                 continue
             logger.info(f"*** Evaluate {split} set ***")
             if split == 'exp':
-                metrics = {}
+                metrics = OrderedDict()
             else:
                 metrics = selector_trainer.evaluate(train_evidence_selector_datasets[split]).metrics
             if training_args.eval_selector_with_reader:
@@ -444,7 +445,7 @@ def main():
                     eval_dataset=datasets[split],
                     feature_func_for_evidence_reading=pprepare_features_for_reading_optionwise_evidence,
                     feature_func_for_evidence_generating=pprepare_features_for_generating_optionwise_evidence)
-                metrics = {**metrics, **reader_eval_results}
+                metrics = OrderedDict(**metrics, **reader_eval_results)
                 output_evidence_file = os.path.join(training_args.output_dir, f"{split}_evidence.json")
                 with open(output_evidence_file, "w") as f:
                     json.dump(all_evidence_sentences, f)
@@ -468,7 +469,7 @@ def main():
             output_eval_file = os.path.join(training_args.output_dir, f"{split}_selector_results.txt")
             with open(output_eval_file, "a+") as writer:
                 logger.info("***** Evidence Selector Eval results *****")
-                for key, value in sorted(metrics.items()):
+                for key, value in metrics.items():
                     logger.info(f"{key} = {value:.3f}")
                     writer.write(f"{key} = {value:.3f}\n")
 
@@ -536,7 +537,7 @@ def main():
         with open(output_train_file, "a+") as writer:
             logger.info("***** Verifier Train results *****")
             writer.write("***** Verifier Train results *****")
-            for key, value in sorted(train_result.metrics.items()):
+            for key, value in train_result.metrics.items():
                 logger.info(f"{key} = {value:.3f}")
                 writer.write(f"{key} = {value:.3f}\n")
 
@@ -585,7 +586,7 @@ def main():
             output_eval_file = os.path.join(training_args.output_dir, f"{split}_verifier_results.txt")
             with open(output_eval_file, "a+") as writer:
                 logger.info(f"***** Eval {split} results *****")
-                for key, value in sorted(metrics.items()):
+                for key, value in metrics.items():
                     logger.info(f"{key} = {value:.3f}")
                     writer.write(f"{key} = {value:.3f}\n")
 

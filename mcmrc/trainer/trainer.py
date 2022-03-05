@@ -5,6 +5,8 @@ import timeit
 import collections
 import time
 
+from collections import OrderedDict
+
 import numpy as np
 from transformers import AdamW, get_linear_schedule_with_warmup
 
@@ -394,7 +396,7 @@ class Trainer:
         best_eval_acc = -10000.0
 
         model = self._wrap_model(self.model)
-        metrics = {}
+        metrics = OrderedDict()
 
         self.optimizer.zero_grad()
 
@@ -431,8 +433,8 @@ class Trainer:
                             with self.timer['cv']:
                                 results = self.evaluate(self.eval_dataset, compute_metrics=self.compute_metrics)
                             for key, value in results.metrics.items():
-                                logger.info(f'step{global_step} eval_{key}: {value}')
-                                metrics[f'step{global_step} eval_{key}'] = value
+                                logger.info(f'step{global_step} {key}: {value}')
+                                metrics[f'step{global_step} {key}'] = value
 
                             _current_eval_acc = max([value for key, value in results.metrics.items() if 'acc' in key]) \
                                 if [value for key, value in results.metrics.items() if 'acc' in key] else \
@@ -554,7 +556,7 @@ class Trainer:
             metrics = compute_metrics(EvalPrediction(predictions=preds, label_ids=label_ids),
                                       all_example_ids=all_example_ids if len(all_example_ids) > 0 else None)
         else:
-            metrics = {}
+            metrics = OrderedDict()
 
         # To be JSON-serializable, we need to remove numpy types or zero-d tensors
         metrics = denumpify_detensorize(metrics)
@@ -767,7 +769,7 @@ class Trainer:
             compute_metrics=compute_mc_metrics)
         self.model = _model
         logger.info("reader results")
-        for key, value in sorted(evidence_reader_output.metrics.items()):
+        for key, value in evidence_reader_output.metrics.items():
             logger.info(f"{key} = {value:.3f}")
 
         answer_verifier_output = self.evaluate(
@@ -776,7 +778,7 @@ class Trainer:
             metric_key_prefix="intensive_selector",
             compute_metrics=compute_mc_metrics)
         logger.info("verifier output")
-        for key, value in sorted(answer_verifier_output.metrics.items()):
+        for key, value in answer_verifier_output.metrics.items():
             logger.info(f"{key} = {value:.3f}")
 
         evidence_reader_predictions = {}
@@ -806,13 +808,16 @@ class Trainer:
                 merge_prediction_dict[ratio][example_id] = (
                             ratio * answer_verifier_prediction + (1 - ratio) * evidence_reader_prediction).tolist()
 
-        all_merged_results = {}
+        all_merged_results = OrderedDict()
+        best_merge_acc = 0
         for ratio in merge_ratio:
-            merged_results = {f'merge_{ratio}_{k}': v for k, v in compute_mc_metrics(
-                EvalPrediction(predictions=merge_prediction[ratio], label_ids=label_list), all_example_ids=all_example_ids).items()}
-            all_merged_results = {**all_merged_results, **merged_results}
+            merged_results = OrderedDict([(f'merge_{ratio}_{k}', v) for k, v in compute_mc_metrics(
+                EvalPrediction(predictions=merge_prediction[ratio], label_ids=label_list), all_example_ids=all_example_ids).items()])
+            if merged_results[f'merge_{ratio}_accuracy'] > best_merge_acc:
+                best_merge_acc = merged_results["accuracy"]
+            all_merged_results = OrderedDict(**all_merged_results, **merged_results)
 
-
-        metrics = {**evidence_reader_output.metrics, **answer_verifier_output.metrics}
-        metrics = {**metrics, **all_merged_results}
+        metrics = OrderedDict(**evidence_reader_output.metrics, **answer_verifier_output.metrics)
+        metrics = OrderedDict(**metrics, **{'best_merge_accuracy': best_merge_acc})
+        metrics = OrderedDict(**metrics, **all_merged_results)
         return metrics, merge_prediction_dict
