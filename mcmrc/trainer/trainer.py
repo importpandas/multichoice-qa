@@ -814,7 +814,7 @@ class Trainer:
             merged_results = OrderedDict([(f'merge_{ratio}_{k}', v) for k, v in compute_mc_metrics(
                 EvalPrediction(predictions=merge_prediction[ratio], label_ids=label_list), all_example_ids=all_example_ids).items()])
             if merged_results[f'merge_{ratio}_accuracy'] > best_merge_acc:
-                best_merge_acc = merged_results["accuracy"]
+                best_merge_acc = merged_results[f'merge_{ratio}_accuracy']
             all_merged_results = OrderedDict(**all_merged_results, **merged_results)
 
         metrics = OrderedDict(**evidence_reader_output.metrics, **answer_verifier_output.metrics)

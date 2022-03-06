@@ -199,16 +199,20 @@ def main():
     else:
         model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
-    checkpoint_dir = hyperparam_path_for_two_stage_evidence_selector(model_args, data_args, training_args)
-    ckpt_dir = Path(checkpoint_dir)
     postfix = ""
     if training_args.train_evidence_selector or training_args.train_answer_verifier:
+        checkpoint_dir = hyperparam_path_for_two_stage_evidence_selector(model_args, data_args, training_args)
         postfix += "_train"
+
     else:
+        checkpoint_dir = training_args.output_dir
         postfix += "_eval"
-    setup_root_logger(ckpt_dir, training_args.local_rank, debug=False, postfix=postfix)
 
     training_args.output_dir = checkpoint_dir
+    ckpt_dir = Path(checkpoint_dir)
+    setup_root_logger(ckpt_dir, training_args.local_rank, debug=False, postfix=postfix)
+
+
 
     # Log on each process the small summary:
     logger.warning(
