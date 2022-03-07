@@ -789,7 +789,7 @@ def prepare_features_for_generating_evidence_using_selector(examples, tokenizer=
         processed_contexts,
         qa_list,
         truncation=True,
-        max_length=data_args.max_seq_length,
+        max_length=data_args.max_evidence_seq_length,
         padding="max_length" if data_args.pad_to_max_length else False,
     )
 
