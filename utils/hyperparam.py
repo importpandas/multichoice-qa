@@ -107,7 +107,8 @@ def hyperparam_path_for_baseline(model_args, data_args, training_args):
 def hyperparam_base(model_args, data_args, training_args):
     exp_name = ''
     exp_name += f'lr_{training_args.learning_rate}__'
-    exp_name += f'wd_{training_args.weight_decay}__'
+    if training_args.weight_decay > 0:
+        exp_name += f'wd_{training_args.weight_decay}__'
     exp_name += f'bs_{training_args.train_batch_size * training_args.gradient_accumulation_steps}__'
     exp_name += f'wr_{training_args.warmup_ratio}__'
     exp_name += f'epoch_{training_args.num_train_epochs}__'
