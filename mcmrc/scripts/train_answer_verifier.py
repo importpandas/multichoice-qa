@@ -79,6 +79,10 @@ class ModelArguments(BasicModelArguments):
         default="",
         metadata={"help": "Path to pretrained MRC system 2 for answering questions using evidence"}
     )
+    initialize_verifier_from_reader: bool = field(
+        default=False,
+        metadata={"help": "Whether to initialize answer verifier from the reader"}
+    )
 
 
 @add_objprint(color=False)
@@ -299,10 +303,15 @@ def main():
     )
     evidence_selector_path = model_args.evidence_selector_path \
         if model_args.evidence_selector_path else model_args.model_name_or_path
-    answer_verifier_path = model_args.answer_verifier_path \
-        if model_args.answer_verifier_path else model_args.model_name_or_path
+
     evidence_reader_path = model_args.evidence_reader_path \
         if model_args.evidence_reader_path else model_args.model_name_or_path
+
+    answer_verifier_path = model_args.answer_verifier_path \
+        if model_args.answer_verifier_path else model_args.model_name_or_path
+    if model_args.initialize_verifier_from_reader:
+        answer_verifier_path = evidence_reader_path
+        logger.info("initialize answer verifier from evidence reader")
 
     evidence_selector_config = AutoConfig.from_pretrained(
         evidence_selector_path,
