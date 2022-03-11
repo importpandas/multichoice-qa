@@ -48,6 +48,7 @@ from ..data_utils.collator import *
 from ..data_utils.eval_expmrc import evaluate_multi_choice
 from ..cli.argument import BasicModelArguments, BasicDataTrainingArguments
 from ..trainer.trainer_utils import compute_mc_metrics, compute_classification_metrics, compute_verifier_metrics
+from ..model.auto_model import AutoModelForMultipleChoice
 
 from mcmrc.data_utils.processors import (
     prepare_features_for_initializing_evidence_selector,
@@ -131,6 +132,24 @@ class DataTrainingArguments(BasicDataTrainingArguments):
         default=2,
         metadata={
             "help": "number of evidence sentences for each choice during evidence competition "
+        },
+    )
+    train_verifier_with_sample_weighting: bool = field(
+        default=False,
+        metadata={
+            "help": "Whether to train answer verifier with weighted samples"
+        },
+    )
+    weighting_temperature: float = field(
+        default=1.0,
+        metadata={
+            "help": "The temperature of softmax function for normalizing the sample weights"
+        },
+    )
+    weighting_method: str = field(
+        default="max_wrong_sub_right",
+        metadata={
+            "help": "The temperature of softmax function for normalizing the sample weights"
         },
     )
     train_verifier_with_option: bool = field(
@@ -261,7 +280,7 @@ def main():
     if data_args.debug_mode:
         datasets = load_dataset(data_args.dataload_script, data_args.dataload_split,
                                 data_dir=data_args.data_dir,
-                                split={'train': ReadInstruction('train', from_=0, to=1, unit='abs'),
+                                split={'train': ReadInstruction('train', from_=0, to=2, unit='abs'),
                                        'validation': ReadInstruction('validation', from_=0, to=1, unit='abs'),
                                        'test': ReadInstruction('test', from_=0, to=1, unit='abs')})
     else:
@@ -321,15 +340,14 @@ def main():
         answer_verifier_path,
         cache_dir=model_args.cache_dir,
     )
+    answer_verifier_config.dataset = data_args.dataset
+    answer_verifier_config.temperature = data_args.weighting_temperature
+
     evidence_reader_config = AutoConfig.from_pretrained(
         evidence_reader_path,
         cache_dir=model_args.cache_dir,
     )
-
-    if data_args.dataset == 'dream' and type(evidence_reader_config).__name__ == "AlbertConfig":
-        from ..model.auto_model import AutoModelForMultipleChoice
-    else:
-        from transformers import AutoModelForMultipleChoice
+    evidence_reader_config.dataset = data_args.dataset
 
     evidence_selector = AutoModelForSequenceClassification.from_pretrained(
         evidence_selector_path,
@@ -376,6 +394,8 @@ def main():
         evidence_len=data_args.verifier_evidence_len,
         train_verifier_with_option=data_args.train_verifier_with_option,
         train_verifier_with_non_overlapping_evidence=data_args.train_verifier_with_non_overlapping_evidence,
+        train_verifier_with_sample_weighting=data_args.train_verifier_with_sample_weighting,
+        score_method=data_args.weighting_method,
         tokenizer=tokenizer,
         data_args=data_args)
 

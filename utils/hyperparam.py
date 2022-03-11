@@ -56,6 +56,9 @@ def hyperparam_path_for_two_stage_evidence_selector(model_args, data_args, train
             exp_name += f'__veri_with_no_overlap_evi_{data_args.train_verifier_with_non_overlapping_evidence}'
         if model_args.initialize_verifier_from_reader:
             exp_name += f'__init_veri_from_reader_{model_args.initialize_verifier_from_reader}'
+        if data_args.train_verifier_with_sample_weighting:
+            exp_name += f'__weighting_temperature_{data_args.weighting_temperature}'
+            exp_name += f'__weighting_temperature_{data_args.weighting_temperature}'
     # try:
     #     if training_args.train_answer_verifier:
     #         exp_name += f'__veri_type_{model_args.verifier_type}'

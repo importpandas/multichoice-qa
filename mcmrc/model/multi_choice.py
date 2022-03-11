@@ -67,6 +67,7 @@ class AlbertForMultipleChoice(AlbertPreTrainedModel):
         attention_mask=None,
         token_type_ids=None,
         position_ids=None,
+        competitive_scores=None,
         head_mask=None,
         inputs_embeds=None,
         labels=None,
@@ -104,8 +105,13 @@ class AlbertForMultipleChoice(AlbertPreTrainedModel):
             return_dict=return_dict,
         )
 
-        sequence_output = outputs[0]
-        pooled_output = torch.mean(sequence_output, 1)
+        if self.config.dataset == 'race':
+            pooled_output = outputs[1]
+        elif self.config.dataset == 'dream':
+            sequence_output = outputs[0]
+            pooled_output = torch.mean(sequence_output, 1)
+        else:
+            raise ValueError("Config.dataset must be race or dream")
 
         pooled_output = self.dropout(pooled_output)
         logits = self.classifier(pooled_output)
@@ -113,8 +119,14 @@ class AlbertForMultipleChoice(AlbertPreTrainedModel):
 
         loss = None
         if labels is not None:
-            loss_fct = CrossEntropyLoss()
-            loss = loss_fct(reshaped_logits, labels)
+            if competitive_scores is not None:
+                loss_fct = CrossEntropyLoss(reduction='none')
+                weights = torch.softmax(competitive_scores / self.config.temperature, dim=-1)
+                loss = loss_fct(reshaped_logits, labels)
+                loss = torch.sum(loss * weights)
+            else:
+                loss_fct = CrossEntropyLoss()
+                loss = loss_fct(reshaped_logits, labels)
 
         if not return_dict:
             output = (reshaped_logits,) + outputs[2:]
@@ -162,6 +174,7 @@ class BertForMultipleChoice(BertPreTrainedModel):
         attention_mask=None,
         token_type_ids=None,
         position_ids=None,
+        competitive_scores=None,
         head_mask=None,
         inputs_embeds=None,
         labels=None,
@@ -200,8 +213,7 @@ class BertForMultipleChoice(BertPreTrainedModel):
             return_dict=return_dict,
         )
 
-        sequence_output = outputs[0]
-        pooled_output = torch.mean(sequence_output, 1)
+        pooled_output = outputs[1]
 
         pooled_output = self.dropout(pooled_output)
         logits = self.classifier(pooled_output)
@@ -209,8 +221,14 @@ class BertForMultipleChoice(BertPreTrainedModel):
 
         loss = None
         if labels is not None:
-            loss_fct = CrossEntropyLoss()
-            loss = loss_fct(reshaped_logits, labels)
+            if competitive_scores is not None:
+                loss_fct = CrossEntropyLoss(reduction='none')
+                weights = torch.softmax(competitive_scores / self.config.temperature, dim=-1)
+                loss = loss_fct(reshaped_logits, labels)
+                loss = torch.sum(loss * weights)
+            else:
+                loss_fct = CrossEntropyLoss()
+                loss = loss_fct(reshaped_logits, labels)
 
         if not return_dict:
             output = (reshaped_logits,) + outputs[2:]

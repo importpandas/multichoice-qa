@@ -1010,10 +1010,40 @@ def prepare_features_for_reading_optionwise_evidence(examples, evidence_logits=N
     return tokenized_examples
 
 
+def get_competitive_score_for_example(evidence_logits, example_id, label, prediction=None, score_method='max_wrong_sub_right',
+                                 topn_scoring_scope=1):
+
+    sent_num = len(evidence_logits[example_id + '_0'])
+    topn_scoring_scope = topn_scoring_scope if sent_num > topn_scoring_scope > 0 else sent_num
+
+    per_example_noisy_scores = [
+        sum(sorted(evidence_logits[example_id + '_' + str(choice)].values(), reverse=True)[: topn_scoring_scope])
+        for choice in range(4) if example_id + '_' + str(choice) in evidence_logits.keys()]
+
+    if score_method == 'max_wrong':
+        per_example_noisy_scores[label] = -1000
+        per_example_noisy_score = max(per_example_noisy_scores)
+    elif score_method == 'max_wrong_sub_right':
+        right_score = per_example_noisy_scores[label]
+        per_example_noisy_scores[label] = -1000
+        per_example_noisy_score = max(per_example_noisy_scores) - right_score
+    elif score_method == 'max_wrong_sub_predict':
+        pred_choice = np.argmax(prediction)
+        pred_score = per_example_noisy_scores[pred_choice]
+        per_example_noisy_scores[pred_choice] = -1000
+        per_example_noisy_score = max(per_example_noisy_scores) - pred_score
+    else:
+        raise ValueError()
+    # noisy_score[eid] = per_example_noisy_score - max(evidence_logits[eid + '_' + str(ord(label) - ord('A'))].values())
+    return per_example_noisy_score
+
+
 def prepare_features_for_answer_verifier(
         examples,
         train_verifier_with_option=False,
         train_verifier_with_non_overlapping_evidence=False,
+        train_verifier_with_sample_weighting=False,
+        score_method="max_wrong_sub_right",
         evidence_logits=None,
         evidence_len=2,
         tokenizer=None,
@@ -1028,15 +1058,22 @@ def prepare_features_for_answer_verifier(
     labels = []
     qa_list = []
     processed_contexts = []
+    competitive_scores = []
+
 
     num_choices = len(options[0])
     evidence_with_logits = []
 
     for i in range(len(answers)):
         full_context = contexts[i]
+        eid = example_ids[i]
 
         label = ord(answers[i]) - ord("A")
         labels.append(label)
+
+        if train_verifier_with_sample_weighting:
+            competitive_score = get_competitive_score_for_example(evidence_logits, eid, label, score_method=score_method)
+            competitive_scores.append(competitive_score)
 
         question = process_text(questions[i])
         context_list = []
@@ -1133,6 +1170,8 @@ def prepare_features_for_answer_verifier(
     tokenized_examples['example_ids'] = example_ids
     tokenized_examples['evidence_sentence'] = [[[i[1] for i in option_evi] for option_evi in evi] for evi in evidence_with_logits]
     tokenized_examples['evidence_logit'] = [[[i[0] for i in option_evi] for option_evi in evi] for evi in evidence_with_logits]
+    if train_verifier_with_sample_weighting:
+        tokenized_examples['competitive_scores'] = competitive_scores
 
     # Un-flatten
     return tokenized_examples

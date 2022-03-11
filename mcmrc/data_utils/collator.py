@@ -107,6 +107,10 @@ class DataCollatorForMultipleChoice:
             example_ids = [feature.pop("example_ids") for feature in features]
         else:
             example_ids = None
+        if "competitive_scores" in features[0].keys():
+            competitive_scores = [feature.pop("competitive_scores") for feature in features]
+        else:
+            competitive_scores = None
         batch_size = len(features)
         num_choices = len(features[0]["input_ids"])
         flattened_features = [
@@ -128,6 +132,9 @@ class DataCollatorForMultipleChoice:
         batch["labels"] = torch.tensor(labels, dtype=torch.int64)
         if example_ids is not None:
             batch["example_ids"] = example_ids
+        if competitive_scores is not None:
+            batch["competitive_scores"] = torch.tensor(competitive_scores, dtype=torch.float32)
+
         return batch
 
 
