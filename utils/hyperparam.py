@@ -95,6 +95,11 @@ def hyperparam_path_for_baseline(model_args, data_args, training_args):
             exp_name += f'__shuffled_data_{data_args.shuffle_train_dataset}'
     except AttributeError:
         logger.error("'data_args' has no attribute 'split_train_dataset'")
+    try:
+        if model_args.loss_function:
+            exp_name += f'__loss_function_{model_args.loss_function}'
+    except AttributeError:
+        logger.error("'model_args' has no attribute 'loss_function'")
     if data_args.pad_to_max_length:
         exp_name += f'__pad_maxlen_{data_args.pad_to_max_length}'
 

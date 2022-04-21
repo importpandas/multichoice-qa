@@ -46,6 +46,7 @@ from utils.initialization import setup_root_logger
 from ..data_utils.collator import DataCollatorForMultipleChoice
 from ..cli.argument import BasicModelArguments, BasicDataTrainingArguments
 from ..trainer.trainer import Trainer, compute_mc_metrics
+from ..model.auto_model import AutoModelForMultipleChoice
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +135,8 @@ def main():
     else:
         from mcmrc.data_utils.processors import prepare_features
 
+    assert model_args.loss_function in ['cross_entropy', 'bce_with_logit']
+
     # In distributed training, the load_dataset function guarantee that only one local process can concurrently
     # download the dataset.
     # See more about loading any type of standard or custom dataset (from files, python dict, pandas DataFrame, etc) at
@@ -179,16 +182,18 @@ def main():
         model_args.config_name if model_args.config_name else model_args.model_name_or_path,
         cache_dir=model_args.cache_dir,
     )
-    config.dataset = data_args.dataset
+    # config.dataset = data_args.dataset
     tokenizer = AutoTokenizer.from_pretrained(
         model_args.tokenizer_name if model_args.tokenizer_name else model_args.model_name_or_path,
         cache_dir=model_args.cache_dir,
         use_fast=model_args.use_fast_tokenizer,
     )
     if data_args.dataset == 'dream' and type(config).__name__ == "AlbertConfig":
-        from ..model.auto_model import AutoModelForMultipleChoice
+        config.pooling_type = "sequence_mean"
     else:
-        from transformers import AutoModelForMultipleChoice
+        config.pooling_type = "linear_pooling"
+
+    config.loss_function = model_args.loss_function
 
     model = AutoModelForMultipleChoice.from_pretrained(
         model_args.model_name_or_path,

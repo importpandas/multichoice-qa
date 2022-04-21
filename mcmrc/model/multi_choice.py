@@ -2,7 +2,7 @@
 
 import torch
 import torch.nn as nn
-from torch.nn import CrossEntropyLoss
+from torch.nn import CrossEntropyLoss, BCEWithLogitsLoss
 from transformers.modeling_outputs import MultipleChoiceModelOutput
 
 from transformers.utils import logging
@@ -105,13 +105,13 @@ class AlbertForMultipleChoice(AlbertPreTrainedModel):
             return_dict=return_dict,
         )
 
-        if self.config.dataset == 'race':
+        if self.config.pooling_type == 'linear_pooling':
             pooled_output = outputs[1]
-        elif self.config.dataset == 'dream':
+        elif self.config.pooling_type == 'sequence_mean':
             sequence_output = outputs[0]
             pooled_output = torch.mean(sequence_output, 1)
         else:
-            raise ValueError("Config.dataset must be race or dream")
+            raise ValueError("Config.pooling type must be linear_pooling or sequence_mean")
 
         pooled_output = self.dropout(pooled_output)
         logits = self.classifier(pooled_output)
@@ -125,8 +125,15 @@ class AlbertForMultipleChoice(AlbertPreTrainedModel):
                 loss = loss_fct(reshaped_logits, labels)
                 loss = torch.sum(loss * weights)
             else:
-                loss_fct = CrossEntropyLoss()
-                loss = loss_fct(reshaped_logits, labels)
+                if self.config.loss_function == "cross_entropy":
+                    loss_fct = CrossEntropyLoss()
+                    loss = loss_fct(reshaped_logits, labels)
+                elif self.config.loss_function == "bce_with_logit":
+                    loss_fct = BCEWithLogitsLoss()
+                    bce_labels = torch.zeros_like(reshaped_logits, device=reshaped_logits.device)
+                    bce_labels.scatter_(-1, labels.unsqueeze(-1), 1)
+                    reshaped_bce_labels = bce_labels.view(-1, 1)
+                    loss = loss_fct(logits, reshaped_bce_labels)
 
         if not return_dict:
             output = (reshaped_logits,) + outputs[2:]
@@ -212,8 +219,13 @@ class BertForMultipleChoice(BertPreTrainedModel):
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
         )
-
-        pooled_output = outputs[1]
+        if self.config.pooling_type == 'linear_pooling':
+            pooled_output = outputs[1]
+        elif self.config.pooling_type == 'sequence_mean':
+            sequence_output = outputs[0]
+            pooled_output = torch.mean(sequence_output, 1)
+        else:
+            raise ValueError("Config.pooling type must be linear_pooling or sequence_mean")
 
         pooled_output = self.dropout(pooled_output)
         logits = self.classifier(pooled_output)
@@ -227,8 +239,15 @@ class BertForMultipleChoice(BertPreTrainedModel):
                 loss = loss_fct(reshaped_logits, labels)
                 loss = torch.sum(loss * weights)
             else:
-                loss_fct = CrossEntropyLoss()
-                loss = loss_fct(reshaped_logits, labels)
+                if self.config.loss_function == "cross_entropy":
+                    loss_fct = CrossEntropyLoss()
+                    loss = loss_fct(reshaped_logits, labels)
+                elif self.config.loss_function == "bce_with_logit":
+                    loss_fct = BCEWithLogitsLoss()
+                    bce_labels = torch.zeros_like(reshaped_logits, device=reshaped_logits.device)
+                    bce_labels.scatter_(-1, labels.unsqueeze(-1), 1)
+                    reshaped_bce_labels = bce_labels.view(-1, 1)
+                    loss = loss_fct(logits, reshaped_bce_labels)
 
         if not return_dict:
             output = (reshaped_logits,) + outputs[2:]

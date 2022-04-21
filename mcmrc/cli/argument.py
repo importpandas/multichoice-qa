@@ -23,6 +23,10 @@ class BasicModelArguments:
         default=True,
         metadata={"help": "Whether to use one of the fast tokenizer (backed by the tokenizers library) or not."},
     )
+    loss_function: str = field(
+        default="cross_entropy",
+        metadata={"help": "Loss function to train multiple choice mrc model"}
+    )
 
 
 @dataclass
