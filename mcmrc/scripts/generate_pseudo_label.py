@@ -44,6 +44,7 @@ from transformers import (
 from utils.utils_distributed_training import is_main_process
 from ..data_utils.collator import DataCollatorForGeneratingEvidenceLabel
 from ..cli.argument import BasicModelArguments, BasicDataTrainingArguments
+from ..model.auto_model import AutoModelForMultipleChoice
 
 from mcmrc.data_utils.processors import (
     load_exp_race_data
@@ -114,7 +115,6 @@ def main():
     # In distributed training, the load_dataset function guarantee that only one local process can concurrently
     # download the dataset.
 
-
     if data_args.debug_mode:
         datasets = load_dataset(data_args.dataload_script, data_args.dataload_split,
                                 data_dir=data_args.data_dir,
@@ -125,7 +125,7 @@ def main():
         datasets = load_dataset(data_args.dataload_script, data_args.dataload_split,
                                 data_dir=data_args.data_dir)
 
-    if data_args.dataset == 'race':
+    if data_args.dataset == 'race' and data_args.exp_race_file is not None:
         datasets['exp'] = Dataset.from_dict(load_exp_race_data(data_args.exp_race_file))
 
     # See more about loading any type of standard or custom dataset (from files, python dict, pandas DataFrame, etc) at
@@ -146,9 +146,10 @@ def main():
         use_fast=model_args.use_fast_tokenizer,
     )
     if data_args.dataset == 'dream' and type(config).__name__ == "AlbertConfig":
-        from ..model.auto_model import AutoModelForMultipleChoice
+        config.pooling_type = "sequence_mean"
     else:
-        from transformers import AutoModelForMultipleChoice
+        config.pooling_type = "linear_pooling"
+
     model = AutoModelForMultipleChoice.from_pretrained(
         model_args.model_name_or_path,
         from_tf=bool(".ckpt" in model_args.model_name_or_path),
@@ -179,10 +180,11 @@ def main():
     if training_args.n_gpu > 1:
         model = torch.nn.DataParallel(model)
 
-    pseudo_label = {}
-    options_prob_diff = {}
-    acc = {}
-    for train_test_or_eval, dataset in tokenized_datasets.items():
+    kv_div = {}
+    options_logit_diff = {}
+    orig_logit = {}
+
+    for train_test_or_eval, dataset in sorted(tokenized_datasets.items()):
         dataloader = DataLoader(
             dataset,
             batch_size=1,
@@ -191,9 +193,9 @@ def main():
             num_workers=0
         )
 
-        pseudo_label_split = {}
-        options_prob_diff_split = {}
-        acc_split = {}
+        kl_div_split = {}
+        options_logit_diff_split = {}
+        orig_logit_split = {}
         print(f'{train_test_or_eval}', len(dataloader))
         for step, batch in enumerate(tqdm.tqdm(dataloader)):
             with torch.no_grad():
@@ -209,14 +211,14 @@ def main():
 
             for i, one_example_sent_bounds in enumerate(sent_bounds):
 
-                if example_ids[i] not in pseudo_label_split.keys():
+                if example_ids[i] not in kl_div_split.keys():
                     kl_div_per_example = {}
                     prob_diff_per_example = {}
-                    pseudo_label_split[example_ids[i]] = kl_div_per_example
-                    options_prob_diff_split[example_ids[i]] = prob_diff_per_example
+                    kl_div_split[example_ids[i]] = kl_div_per_example
+                    options_logit_diff_split[example_ids[i]] = prob_diff_per_example
                 else:
-                    kl_div_per_example = pseudo_label_split[example_ids[i]]
-                    prob_diff_per_example = options_prob_diff_split[example_ids[i]]
+                    kl_div_per_example = kl_div_split[example_ids[i]]
+                    prob_diff_per_example = options_logit_diff_split[example_ids[i]]
 
                 one_example_logit = origin_logits[i]
                 one_example_sent_bounds = torch.tensor(one_example_sent_bounds, device=device)
@@ -251,7 +253,7 @@ def main():
                         }
                         masked_logits = model(**masked_inputs).logits.detach().cpu()
                         kl_divs = torch.sum(F.kl_div(F.log_softmax(masked_logits, dim=-1), F.softmax(one_example_logit, dim=-1), reduction='none'), dim=-1)
-                        prob_diff = F.softmax(masked_logits, dim=-1) - F.softmax(one_example_logit, dim=-1)
+                        prob_diff = masked_logits - one_example_logit
 
                     for k, kl_div in enumerate(kl_divs.detach().cpu().tolist()):
                         sent_idx = one_example_sent_bounds[batch_start + k, 0].item()
@@ -265,18 +267,18 @@ def main():
                             kl_div_per_example[sent_idx] = evidence_or_noise * kl_div
                             prob_diff_per_example[sent_idx] = prob_diff[k].detach().cpu().tolist()
 
-                acc_split[example_ids[i]] = 1 if torch.argmax(one_example_logit).item() == one_example_label.item() else 0
+                orig_logit_split[example_ids[i]] = one_example_logit
 
-        pseudo_label[train_test_or_eval] = pseudo_label_split
-        options_prob_diff[train_test_or_eval] = options_prob_diff_split
-        acc[train_test_or_eval] = acc_split
+        kv_div[train_test_or_eval] = kl_div_split
+        options_logit_diff[train_test_or_eval] = options_logit_diff_split
+        orig_logit[train_test_or_eval] = orig_logit_split
 
-    label = {
-        'pseudo_label': pseudo_label,
-        'acc': acc,
-        'options_prob_diff': options_prob_diff
-    }
-    torch.save(label, data_args.dataset + f"_pseudo_label_with_options_{config.model_type}_{config.hidden_size}.pt")
+        label = {
+            'kv_div': kv_div,
+            'orig_logit': orig_logit,
+            'options_logit_diff': options_logit_diff
+        }
+        torch.save(label, data_args.dataset + f"_bce_pseudo_label_with_options_{config.model_type}_{config.hidden_size}.pt")
 
 
 if __name__ == "__main__":
