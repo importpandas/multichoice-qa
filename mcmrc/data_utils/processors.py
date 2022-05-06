@@ -21,17 +21,10 @@ def whitespace_tokenize(text):
 def load_pseudo_label(pseudo_label_path):
     pseudo_label = torch.load(pseudo_label_path)
     pseudo_label_merged = {}
-    pseudo_label_merged['acc'] = pseudo_label['acc']
-    # pseudo_label_merged['acc'] = dict(**pseudo_label['acc']['train'],
-    #                                   **pseudo_label['acc']['validation'], **pseudo_label['acc']['test'])
-    pseudo_label_merged['logit'] = dict(**pseudo_label['pseudo_label']['train'],
-                                        **pseudo_label['pseudo_label']['validation'],
-                                        **pseudo_label['pseudo_label']['test'])
-    if 'options_prob_diff' in pseudo_label.keys():
-        pseudo_label_merged['options_prob_diff'] = dict(**pseudo_label['options_prob_diff']['train'],
-                                                        **pseudo_label['options_prob_diff']['validation'],
-                                                        **pseudo_label['options_prob_diff']['test'])
-
+    for item in pseudo_label.keys():
+        pseudo_label_merged[item] = {}
+        for split in pseudo_label[item].keys():
+            pseudo_label_merged[item].update(pseudo_label[item][split])
     return pseudo_label_merged
 
 
@@ -631,6 +624,121 @@ def prepare_features_for_initializing_simple_evidence_selector(examples, evidenc
         qa_list,
         truncation=True,
         max_length=data_args.max_seq_length,
+        padding="max_length" if data_args.pad_to_max_length else False,
+    )
+
+    tokenized_examples['label'] = labels
+
+    # Un-flatten
+    return tokenized_examples
+
+
+def prepare_features_for_initializing_bidirectional_evidence_selector(examples,
+                                                        evidence_sampling_num=1,
+                                                        negative_sampling_ratio=1.0,
+                                                        tokenizer=None,
+                                                        data_args=None,
+                                                        pseudo_label_path=""):
+    contexts = examples['article']
+    answers = examples['answer']
+    options = examples['options']
+    questions = examples['question']
+    example_ids = examples['example_id']
+    sent_starts = examples['article_sent_start']
+
+    all_pseudo_label = load_pseudo_label(pseudo_label_path)
+
+    options_logit_diff = all_pseudo_label['options_logit_diff']
+
+    qa_list = []
+    labels = []
+    processed_contexts = []
+
+    num_choices = len(options[0])
+
+    for i in range(len(answers)):
+        full_context = contexts[i]
+        example_id = example_ids[i]
+
+        per_example_options_prob_diff = options_logit_diff[example_id]
+
+        processed_question = process_text(questions[i])
+
+        per_example_sent_starts = sent_starts[i]
+        per_example_sent_starts.append(len(full_context))
+
+        evidence_sampling_num = evidence_sampling_num if evidence_sampling_num <= len(
+            per_example_options_prob_diff) else len(per_example_options_prob_diff)
+
+        sorted_sents_by_positive_score = sorted(per_example_options_prob_diff.items(), key=lambda x: abs(min(x[1])),
+                                                reverse=True)
+        sorted_sents_by_negative_score = sorted(per_example_options_prob_diff.items(), key=lambda x: max(x[1]),
+                                                reverse=True)
+
+        positive_evidence_set = []
+        for positive_evidence, evidence_score in sorted_sents_by_positive_score[: evidence_sampling_num]:
+            sent_start = per_example_sent_starts[positive_evidence]
+            sent_end = per_example_sent_starts[positive_evidence + 1]
+            evidence_sent = full_context[sent_start: sent_end]
+            if np.min(evidence_score) >= 0:
+                continue
+            option_for_evidence = np.argmin(evidence_score)
+            option = process_text(options[i][option_for_evidence])
+            qa_concat = processed_question + "[SEP]"
+            qa_concat += option
+
+            processed_contexts.append(evidence_sent)
+            qa_list.append(qa_concat)
+            labels.append(1)
+            positive_evidence_set.append(positive_evidence)
+
+        negative_evidence_set = []
+        for negative_evidence, evidence_score in sorted_sents_by_negative_score[: evidence_sampling_num]:
+            sent_start = per_example_sent_starts[negative_evidence]
+            sent_end = per_example_sent_starts[negative_evidence + 1]
+            evidence_sent = full_context[sent_start: sent_end]
+            if np.max(evidence_score) <= 0:
+                continue
+            option_for_evidence = np.argmax(evidence_score)
+            option = process_text(options[i][option_for_evidence])
+            qa_concat = processed_question + "[SEP]"
+            qa_concat += option
+
+            processed_contexts.append(evidence_sent)
+            qa_list.append(qa_concat)
+            labels.append(2)
+            negative_evidence_set.append(negative_evidence)
+
+        all_irre_sent_idxs = list(filter(lambda x: x not in positive_evidence_set + negative_evidence_set,
+                                         list(range(len(per_example_sent_starts) - 1))))
+        if evidence_sampling_num * negative_sampling_ratio <= len(all_irre_sent_idxs):
+            negative_sent_num = evidence_sampling_num * negative_sampling_ratio
+            if 0 < negative_sent_num < 1 and random.random() > negative_sent_num:
+                negative_sent_num = 1
+            else:
+                negative_sent_num = int(negative_sent_num)
+        else:
+            negative_sent_num = len(all_irre_sent_idxs)
+
+        if negative_sent_num >= 1:
+            irre_options = random.sample(list(range(num_choices)), negative_sent_num)
+            for idx, irre_sent_idx in enumerate(random.sample(all_irre_sent_idxs, negative_sent_num)):
+                sent_start = per_example_sent_starts[irre_sent_idx]
+                sent_end = per_example_sent_starts[irre_sent_idx + 1]
+                irre_sent = full_context[sent_start: sent_end]
+                option = process_text(options[i][irre_options[idx]])
+                qa_concat = processed_question + "[SEP]"
+                qa_concat += option
+
+                processed_contexts.append(irre_sent)
+                qa_list.append(qa_concat)
+                labels.append(0)
+
+    tokenized_examples = tokenizer(
+        processed_contexts,
+        qa_list,
+        truncation=True,
+        max_length=data_args.max_evidence_seq_length,
         padding="max_length" if data_args.pad_to_max_length else False,
     )
 

@@ -52,6 +52,7 @@ from ..model.auto_model import AutoModelForMultipleChoice
 
 from mcmrc.data_utils.processors import (
     prepare_features_for_initializing_evidence_selector,
+    prepare_features_for_initializing_bidirectional_evidence_selector,
     prepare_features_for_generating_optionwise_evidence, prepare_features_for_reading_optionwise_evidence,
     prepare_features_for_answer_verifier,
     prepare_features,
@@ -111,7 +112,7 @@ class DataTrainingArguments(BasicDataTrainingArguments):
         },
     )
     evidence_sampling_num: int = field(
-        default=2,
+        default=1,
         metadata={
             "help": "number of sentences of each evidence"
         },
@@ -126,6 +127,12 @@ class DataTrainingArguments(BasicDataTrainingArguments):
         default=False,
         metadata={
             "help": "Whether to use hard negative examples for training evidence selector"
+        },
+    )
+    bidirectional_evidence_selector: bool = field(
+        default=False,
+        metadata={
+            "help": "Whether to train bidirectional evidence selector"
         },
     )
     verifier_evidence_len: int = field(
@@ -336,6 +343,10 @@ def main():
         evidence_selector_path,
         cache_dir=model_args.cache_dir,
     )
+    if data_args.bidirectional_evidence_selector:
+        evidence_selector_config.num_labels = 3
+    else:
+        evidence_selector_config.num_labels = 2
     answer_verifier_config = AutoConfig.from_pretrained(
         answer_verifier_path,
         cache_dir=model_args.cache_dir,
@@ -347,7 +358,14 @@ def main():
         evidence_reader_path,
         cache_dir=model_args.cache_dir,
     )
-    evidence_reader_config.dataset = data_args.dataset
+    if data_args.dataset == 'dream' and type(evidence_reader_config).__name__ == "AlbertConfig":
+        evidence_reader_config.pooling_type = "sequence_mean"
+        answer_verifier_config.pooling_type = "sequence_mean"
+    else:
+        evidence_reader_config.pooling_type = "linear_pooling"
+        answer_verifier_config.pooling_type = "linear_pooling"
+    evidence_reader_config.loss_function = model_args.loss_function
+    answer_verifier_config.loss_function = model_args.loss_function
 
     evidence_selector = AutoModelForSequenceClassification.from_pretrained(
         evidence_selector_path,
@@ -370,14 +388,23 @@ def main():
     else:
         column_names = datasets["validation"].column_names
 
-    pprepare_features_for_initializing_evidence_selector = partial(
-        prepare_features_for_initializing_evidence_selector,
-        evidence_sampling_num=data_args.evidence_sampling_num,
-        negative_sampling_ratio=data_args.negative_sampling_ratio,
-        hard_negative_sampling=data_args.hard_negative_sampling,
-        tokenizer=tokenizer,
-        data_args=data_args,
-        pseudo_label_path=data_args.pseudo_label_path)
+    if data_args.bidirectional_evidence_selector:
+        pprepare_features_for_initializing_evidence_selector = partial(
+            prepare_features_for_initializing_bidirectional_evidence_selector,
+            evidence_sampling_num=data_args.evidence_sampling_num,
+            negative_sampling_ratio=data_args.negative_sampling_ratio,
+            tokenizer=tokenizer,
+            data_args=data_args,
+            pseudo_label_path=data_args.pseudo_label_path)
+    else:
+        pprepare_features_for_initializing_evidence_selector = partial(
+            prepare_features_for_initializing_evidence_selector,
+            evidence_sampling_num=data_args.evidence_sampling_num,
+            negative_sampling_ratio=data_args.negative_sampling_ratio,
+            hard_negative_sampling=data_args.hard_negative_sampling,
+            tokenizer=tokenizer,
+            data_args=data_args,
+            pseudo_label_path=data_args.pseudo_label_path)
 
     pprepare_features_for_generating_optionwise_evidence = partial(
         prepare_features_for_generating_optionwise_evidence,
