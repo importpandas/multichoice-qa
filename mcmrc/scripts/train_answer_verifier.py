@@ -55,6 +55,7 @@ from mcmrc.data_utils.processors import (
     prepare_features_for_initializing_bidirectional_evidence_selector,
     prepare_features_for_generating_optionwise_evidence, prepare_features_for_reading_optionwise_evidence,
     prepare_features_for_answer_verifier,
+    prepare_features_for_bidirectional_answer_verifier,
     prepare_features,
     load_exp_race_data,
     load_adv_race_data
@@ -136,7 +137,7 @@ class DataTrainingArguments(BasicDataTrainingArguments):
         },
     )
     verifier_evidence_len: int = field(
-        default=2,
+        default=1,
         metadata={
             "help": "number of evidence sentences for each choice during evidence competition "
         },
@@ -396,6 +397,14 @@ def main():
             tokenizer=tokenizer,
             data_args=data_args,
             pseudo_label_path=data_args.pseudo_label_path)
+
+        pprepare_features_for_answer_verifier = partial(
+            prepare_features_for_bidirectional_answer_verifier,
+            evidence_len=data_args.verifier_evidence_len,
+            train_verifier_with_option=data_args.train_verifier_with_option,
+            tokenizer=tokenizer,
+            data_args=data_args)
+
     else:
         pprepare_features_for_initializing_evidence_selector = partial(
             prepare_features_for_initializing_evidence_selector,
@@ -406,6 +415,16 @@ def main():
             data_args=data_args,
             pseudo_label_path=data_args.pseudo_label_path)
 
+        pprepare_features_for_answer_verifier = partial(
+            prepare_features_for_answer_verifier,
+            evidence_len=data_args.verifier_evidence_len,
+            train_verifier_with_option=data_args.train_verifier_with_option,
+            train_verifier_with_non_overlapping_evidence=data_args.train_verifier_with_non_overlapping_evidence,
+            train_verifier_with_sample_weighting=data_args.train_verifier_with_sample_weighting,
+            score_method=data_args.weighting_method,
+            tokenizer=tokenizer,
+            data_args=data_args)
+
     pprepare_features_for_generating_optionwise_evidence = partial(
         prepare_features_for_generating_optionwise_evidence,
         tokenizer=tokenizer,
@@ -413,16 +432,6 @@ def main():
 
     pprepare_features_for_reading_optionwise_evidence = partial(
         prepare_features_for_reading_optionwise_evidence,
-        tokenizer=tokenizer,
-        data_args=data_args)
-
-    pprepare_features_for_answer_verifier = partial(
-        prepare_features_for_answer_verifier,
-        evidence_len=data_args.verifier_evidence_len,
-        train_verifier_with_option=data_args.train_verifier_with_option,
-        train_verifier_with_non_overlapping_evidence=data_args.train_verifier_with_non_overlapping_evidence,
-        train_verifier_with_sample_weighting=data_args.train_verifier_with_sample_weighting,
-        score_method=data_args.weighting_method,
         tokenizer=tokenizer,
         data_args=data_args)
 
@@ -543,8 +552,10 @@ def main():
             evidence_logits = pickle.load(open(evidence_logits_file, 'rb'))
         else:
             evidence_logits = {
-                k: selector_trainer.evidence_generating(v, pprepare_features_for_generating_optionwise_evidence) for k, v
-                in datasets.items()}
+                k: selector_trainer.evidence_generating(v,
+                                                        pprepare_features_for_generating_optionwise_evidence,
+                                                        bidirectional_evidence=data_args.bidirectional_evidence_selector)
+                for k, v in datasets.items()}
             with open(evidence_logits_file, "wb") as f:
                 pickle.dump(evidence_logits, f)
 

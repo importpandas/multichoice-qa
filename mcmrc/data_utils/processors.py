@@ -1146,6 +1146,104 @@ def get_competitive_score_for_example(evidence_logits, example_id, label, predic
     return per_example_noisy_score
 
 
+def prepare_features_for_bidirectional_answer_verifier(
+        examples,
+        train_verifier_with_option=True,
+        evidence_logits=None,
+        evidence_len=1,
+        tokenizer=None,
+        data_args=None):
+    contexts = examples['article']
+    answers = examples['answer']
+    options = examples['options']
+    questions = examples['question']
+    example_ids = examples['example_id']
+    sent_starts = examples['article_sent_start']
+
+    labels = []
+    qa_list = []
+    processed_contexts = []
+
+    num_choices = len(options[0])
+    evidence_with_logits = []
+
+    for i in range(len(answers)):
+        full_context = contexts[i]
+        eid = example_ids[i]
+
+        label = ord(answers[i]) - ord("A")
+        labels.append(label)
+
+        question = process_text(questions[i])
+        context_list = []
+
+        if train_verifier_with_option:
+            qa_pairs = []
+            for j in range(num_choices):
+                option = process_text(options[i][j])
+
+                qa_cat = concat_question_option(question, option, dataset=data_args.dataset)
+                qa_cat = " ".join(whitespace_tokenize(qa_cat)[- data_args.max_qa_length:])
+                qa_pairs.append(qa_cat)
+        else:
+            qa_pairs = [question] * num_choices
+
+        per_example_sent_starts = sent_starts[i]
+        per_example_sent_starts.append(len(full_context))
+
+        per_example_evidence_with_logits = [[] for _ in range(num_choices)]
+        sent_num = len(evidence_logits[example_ids[i] + '_' + str(0)])
+        for j in range(num_choices):
+            optionwise_example_id = example_ids[i] + '_' + str(j)
+
+            per_example_evidence_logits = evidence_logits[optionwise_example_id]
+
+            evidence_len = evidence_len if evidence_len <= sent_num else sent_num
+            sorted_sents_by_positive_score = sorted(per_example_evidence_logits.items(), key=lambda x: x[1][1],
+                                                    reverse=True)
+            sorted_sents_by_negative_score = sorted(per_example_evidence_logits.items(), key=lambda x: x[1][2],
+                                                    reverse=True)
+            evidence_concat = ""
+            for positive_evidence, evidence_score in sorted_sents_by_positive_score[: evidence_len]:
+                sent_start = per_example_sent_starts[positive_evidence]
+                sent_end = per_example_sent_starts[positive_evidence + 1]
+                evidence_concat += full_context[sent_start: sent_end]
+                per_example_evidence_with_logits[j].append([per_example_evidence_logits[positive_evidence],
+                                                            full_context[sent_start: sent_end]])
+            evidence_concat += " [SEP] "
+
+            for negative_evidence, evidence_score in sorted_sents_by_negative_score[: evidence_len]:
+                sent_start = per_example_sent_starts[negative_evidence]
+                sent_end = per_example_sent_starts[negative_evidence + 1]
+                evidence_concat += full_context[sent_start: sent_end]
+                per_example_evidence_with_logits[j].append([per_example_evidence_logits[negative_evidence],
+                                                            full_context[sent_start: sent_end]])
+
+            context_list.append(evidence_concat)
+        evidence_with_logits.append(per_example_evidence_with_logits)
+        processed_contexts.append(context_list)
+        qa_list.append(qa_pairs)
+
+    first_sentences = sum(processed_contexts, [])
+    second_sentences = sum(qa_list, [])
+
+    tokenized_examples = tokenizer(
+        first_sentences,
+        second_sentences,
+        truncation="only_first",
+        max_length=data_args.max_evidence_seq_length,
+        padding="max_length" if data_args.pad_to_max_length else False,
+    )
+    tokenized_examples = {k: [v[i: i + num_choices] for i in range(0, len(v), num_choices)] for k, v in tokenized_examples.items()}
+    tokenized_examples['label'] = labels
+    tokenized_examples['example_ids'] = example_ids
+    tokenized_examples['evidence_sentence'] = [[[i[1] for i in option_evi] for option_evi in evi] for evi in evidence_with_logits]
+    tokenized_examples['evidence_logit'] = [[[i[0] for i in option_evi] for option_evi in evi] for evi in evidence_with_logits]
+
+    # Un-flatten
+    return tokenized_examples
+
+
 def prepare_features_for_answer_verifier(
         examples,
         train_verifier_with_option=False,

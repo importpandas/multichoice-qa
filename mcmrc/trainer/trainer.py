@@ -637,7 +637,8 @@ class Trainer:
 
     def evidence_generating(self,
                             eval_dataset,
-                            feature_func_for_evidence_generating):
+                            feature_func_for_evidence_generating,
+                            bidirectional_evidence=False):
         evidence_generating_data_collator = DataCollatorForGeneratingEvidenceUsingSelector(tokenizer=self.tokenizer)
 
         evidence_generating_dataset = eval_dataset.map(
@@ -679,12 +680,16 @@ class Trainer:
                 logits = evidence_selector(**inputs).logits.detach().cpu()
 
             if not is_complex_selector:
-                probs = torch.softmax(logits, dim=-1)
+
 
                 for i, (example_id, sent_idx) in enumerate(zip(example_ids, sent_idxs)):
                     if example_id not in evidence_logits.keys():
                         evidence_logits[example_id] = {}
-                    evidence_logits[example_id][sent_idx] = probs[i][1].item()
+                    if bidirectional_evidence:
+                        evidence_logits[example_id][sent_idx] = logits[i].tolist()
+                    else:
+                        probs = torch.softmax(logits, dim=-1)
+                        evidence_logits[example_id][sent_idx] = probs[i][1].item()
             else:
                 probs = torch.softmax(logits, dim=-1)
                 sent_idxs = batch['sent_bounds'][:, :, 0].detach().cpu().tolist()
