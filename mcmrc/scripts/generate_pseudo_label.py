@@ -61,6 +61,9 @@ class DataTrainingArguments(BasicDataTrainingArguments):
     debug_mode:  bool = field(
         default=False, metadata={"help": "whether to load a subset of data for debug"}
     )
+    generate_pickout_label:  bool = field(
+        default=False, metadata={"help": "whether to generate pick-out style pseudo label"}
+    )
     exp_race_file: Optional[str] = field(
         default=None,
         metadata={"help": "An optional input evaluation data file to evaluate model on exp_race_file"},
@@ -110,7 +113,8 @@ def main():
     if data_args.dataset not in ['race', 'dream']:
         raise ValueError("Dataset should be race or dream.")
     else:
-        from mcmrc.data_utils.processors import prepare_features_for_generate_pseudo_label
+        from mcmrc.data_utils.processors import prepare_features_for_generate_pseudo_label, \
+            prepare_features_for_generate_pickout_pseudo_label
 
     # In distributed training, the load_dataset function guarantee that only one local process can concurrently
     # download the dataset.
@@ -159,8 +163,12 @@ def main():
 
     column_names = datasets["train"].column_names
 
-    pprepare_features_for_generate_pseudo_label = partial(prepare_features_for_generate_pseudo_label,
-                                                          tokenizer=tokenizer, data_args=data_args)
+    if data_args.generate_pickout_label:
+        pprepare_features_for_generate_pseudo_label = partial(prepare_features_for_generate_pickout_pseudo_label,
+                                                              tokenizer=tokenizer, data_args=data_args)
+    else:
+        pprepare_features_for_generate_pseudo_label = partial(prepare_features_for_generate_pseudo_label,
+                                                              tokenizer=tokenizer, data_args=data_args)
     tokenized_datasets = datasets.map(
         pprepare_features_for_generate_pseudo_label,
         batched=True,
@@ -180,6 +188,46 @@ def main():
     if training_args.n_gpu > 1:
         model = torch.nn.DataParallel(model)
 
+    if data_args.generate_pickout_label:
+        pickout_logit = {}
+        for train_test_or_eval, dataset in sorted(tokenized_datasets.items()):
+            dataloader = DataLoader(
+                dataset,
+                batch_size=training_args.eval_batch_size,
+                sampler=SequentialSampler(dataset),
+                collate_fn=data_collator,
+                num_workers=4
+            )
+            pickout_logit_split = {}
+            print(f'{train_test_or_eval}', len(dataloader))
+            for step, batch in enumerate(tqdm.tqdm(dataloader)):
+                origin_inputs = {
+                    "input_ids": batch['input_ids'].to(device),
+                    "attention_mask": batch['attention_mask'].to(device),
+                    "token_type_ids": batch['token_type_ids'].to(device),
+                }
+                example_ids = batch['example_ids']
+                sent_idxs = batch['sent_idx']
+
+                with torch.no_grad():
+                    logits = model(**origin_inputs).logits.detach().cpu()
+                for example_id, sent_idx, logit in zip(example_ids, sent_idxs, logits):
+                    if example_id not in pickout_logit_split.keys():
+                        pickout_logit_split[example_id] = {}
+                    pickout_logit_split[example_id][sent_idx] = logit.tolist()
+            pickout_logit[train_test_or_eval] = pickout_logit_split
+
+        pseudo_label_path = data_args.dataset + f"_bce_pseudo_label_with_options_{config.model_type}_{config.hidden_size}.pt"
+        if os.path.exists(pseudo_label_path):
+            label = torch.load(data_args.dataset + f"_bce_pseudo_label_with_options_{config.model_type}_{config.hidden_size}.pt")
+        else:
+            label = {}
+        label['pickout_logit'] = pickout_logit
+
+        torch.save(label,
+                   data_args.dataset + f"_bce_pseudo_label_with_pickout_{config.model_type}_{config.hidden_size}.pt")
+        sys.exit(0)
+
     kv_div = {}
     options_logit_diff = {}
     orig_logit = {}
@@ -198,19 +246,18 @@ def main():
         orig_logit_split = {}
         print(f'{train_test_or_eval}', len(dataloader))
         for step, batch in enumerate(tqdm.tqdm(dataloader)):
-            with torch.no_grad():
-                origin_inputs = {
-                    "input_ids": batch['input_ids'].to(device),
-                    "attention_mask": batch['attention_mask'].to(device),
-                    "token_type_ids": batch['token_type_ids'].to(device),
-                }
-                origin_logits = model(**origin_inputs).logits.detach().cpu()
-
+            origin_inputs = {
+                "input_ids": batch['input_ids'].to(device),
+                "attention_mask": batch['attention_mask'].to(device),
+                "token_type_ids": batch['token_type_ids'].to(device),
+            }
             example_ids = batch['example_ids']
             sent_bounds = batch['sent_bound_token']
 
-            for i, one_example_sent_bounds in enumerate(sent_bounds):
+            with torch.no_grad():
+                origin_logits = model(**origin_inputs).logits.detach().cpu()
 
+            for i, one_example_sent_bounds in enumerate(sent_bounds):
                 if example_ids[i] not in kl_div_split.keys():
                     kl_div_per_example = {}
                     prob_diff_per_example = {}
@@ -245,12 +292,12 @@ def main():
                     batched_input_ids = one_example_input_ids.expand(batch_end - batch_start, -1, -1).contiguous()
                     batched_token_type_ids = one_example_token_type_ids.expand(batch_end - batch_start, -1, -1).contiguous()
 
-                    with torch.no_grad():
-                        masked_inputs = {
+                    masked_inputs = {
                             "input_ids": batched_input_ids.to(device),
                             "attention_mask": batched_attention_mask.to(device),
                             "token_type_ids": batched_token_type_ids.to(device),
                         }
+                    with torch.no_grad():
                         masked_logits = model(**masked_inputs).logits.detach().cpu()
                         kl_divs = torch.sum(F.kl_div(F.log_softmax(masked_logits, dim=-1), F.softmax(one_example_logit, dim=-1), reduction='none'), dim=-1)
                         prob_diff = masked_logits - one_example_logit

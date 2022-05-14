@@ -551,6 +551,7 @@ def main():
             logger.info("Loading evidence logits from cached file %s", evidence_logits_file)
             evidence_logits = pickle.load(open(evidence_logits_file, 'rb'))
         else:
+            logger.info("Generating evidence logits")
             evidence_logits = {
                 k: selector_trainer.evidence_generating(v,
                                                         pprepare_features_for_generating_optionwise_evidence,

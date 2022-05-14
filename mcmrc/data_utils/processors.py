@@ -274,6 +274,71 @@ def prepare_features_for_evaluating_evidence(examples, evidence_sentences=None, 
 
 
 # Preprocessing the datasets.
+def prepare_features_for_generate_pickout_pseudo_label(examples, tokenizer=None, data_args=None):
+    contexts = examples['article']
+    answers = examples['answer']
+    options = examples['options']
+    questions = examples['question']
+    example_ids = examples['example_id']
+    sent_starts = examples['article_sent_start']
+
+    qa_list = []
+    labels = []
+    all_example_ids = []
+    all_sent_idxs = []
+    processed_contexts = []
+    num_choices = len(options[0])
+
+    for i in range(len(answers)):
+        full_context = contexts[i]
+        example_id = example_ids[i]
+        label = ord(answers[i]) - ord("A")
+
+        question = process_text(questions[i])
+        qa_pairs = []
+        for j in range(num_choices):
+            option = process_text(options[i][j])
+
+            qa_cat = concat_question_option(question, option, dataset=data_args.dataset)
+            qa_cat = " ".join(whitespace_tokenize(qa_cat)[- data_args.max_qa_length:])
+            qa_pairs.append(qa_cat)
+
+        per_example_sent_starts = sent_starts[i]
+        per_example_sent_starts.append(len(full_context))
+
+        for sent_idx in range(len(per_example_sent_starts) - 1):
+            sent_start = per_example_sent_starts[sent_idx]
+            sent_end = per_example_sent_starts[sent_idx + 1]
+            pickout_sent = full_context[sent_start: sent_end]
+
+            processed_contexts.append([process_text(pickout_sent)] * num_choices)
+            qa_list.append(qa_pairs)
+            all_sent_idxs.append(sent_idx)
+            all_example_ids.append(example_id)
+            labels.append(label)
+
+    first_sentences = sum(processed_contexts, [])
+    second_sentences = sum(qa_list, [])
+
+    tokenized_examples = tokenizer(
+        first_sentences,
+        second_sentences,
+        truncation="only_first",
+        max_length=128,
+        padding="max_length" if data_args.pad_to_max_length else False,
+    )
+    tokenized_examples = {k: [v[i: i + num_choices] for i in range(0, len(v), num_choices)] for k, v in tokenized_examples.items()}
+
+    tokenized_examples['label'] = labels
+    tokenized_examples['example_ids'] = all_example_ids
+    tokenized_examples['sent_idx'] = all_sent_idxs
+
+    # Un-flatten
+    return tokenized_examples
+
+
+
+# Preprocessing the datasets.
 def prepare_features_for_generate_pseudo_label(examples, tokenizer=None, data_args=None):
     contexts = examples['article']
     answers = examples['answer']
