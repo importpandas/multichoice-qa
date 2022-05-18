@@ -136,6 +136,18 @@ class DataTrainingArguments(BasicDataTrainingArguments):
             "help": "Whether to train bidirectional evidence selector"
         },
     )
+    selector_jump_wrong_examples: bool = field(
+        default=False,
+        metadata={
+            "help": "Whether to train bidirectional evidence selector without mispredicted examples by model"
+        },
+    )
+    evidence_polarity_by_answer_correctness: str = field(
+        default="none",
+        metadata={
+            "help": "Whether to only generate positive evidence from right answer and negative evidence from wrong answer"
+        },
+    )
     verifier_evidence_len: int = field(
         default=1,
         metadata={
@@ -396,7 +408,9 @@ def main():
             negative_sampling_ratio=data_args.negative_sampling_ratio,
             tokenizer=tokenizer,
             data_args=data_args,
-            pseudo_label_path=data_args.pseudo_label_path)
+            pseudo_label_path=data_args.pseudo_label_path,
+            jump_wrong_examples=data_args.selector_jump_wrong_examples,
+            polarity_by_answer=data_args.evidence_polarity_by_answer_correctness)
 
         pprepare_features_for_answer_verifier = partial(
             prepare_features_for_bidirectional_answer_verifier,

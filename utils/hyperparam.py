@@ -44,6 +44,10 @@ def hyperparam_path_for_two_stage_evidence_selector(model_args, data_args, train
         exp_name += f'__evi_sam_num_{data_args.evidence_sampling_num}'
         exp_name += f'__neg_sam_ratio_{data_args.negative_sampling_ratio}'
         exp_name += f'__hard_sam_{data_args.hard_negative_sampling}'
+        if data_args.selector_jump_wrong_examples:
+            exp_name += f'__jump_wrong_{data_args.selector_jump_wrong_examples}'
+        if data_args.evidence_polarity_by_answer_correctness:
+            exp_name += f'__evidence_polarity_{data_args.evidence_polarity_by_answer_correctness}'
     if training_args.train_answer_verifier:
         exp_name = re.sub(r"__epoch_[\d.]+", "", exp_name)
         # if not training_args.train_evidence_selector:

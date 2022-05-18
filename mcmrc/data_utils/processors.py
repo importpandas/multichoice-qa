@@ -703,7 +703,9 @@ def prepare_features_for_initializing_bidirectional_evidence_selector(examples,
                                                         negative_sampling_ratio=1.0,
                                                         tokenizer=None,
                                                         data_args=None,
-                                                        pseudo_label_path=""):
+                                                        pseudo_label_path="",
+                                                        jump_wrong_examples=False,
+                                                        polarity_by_answer="none"):
     contexts = examples['article']
     answers = examples['answer']
     options = examples['options']
@@ -714,9 +716,11 @@ def prepare_features_for_initializing_bidirectional_evidence_selector(examples,
     all_pseudo_label = load_pseudo_label(pseudo_label_path)
 
     options_logit_diff = all_pseudo_label['options_logit_diff']
+    orig_logit = all_pseudo_label['orig_logit']
 
     qa_list = []
     labels = []
+    all_example_ids = []
     processed_contexts = []
 
     num_choices = len(options[0])
@@ -724,6 +728,11 @@ def prepare_features_for_initializing_bidirectional_evidence_selector(examples,
     for i in range(len(answers)):
         full_context = contexts[i]
         example_id = example_ids[i]
+        qa_label = ord(answers[i]) - ord('A')
+        qa_pred = int(np.argmax(orig_logit[example_id]))
+
+        if jump_wrong_examples and qa_pred != qa_label:
+            continue
 
         per_example_options_prob_diff = options_logit_diff[example_id]
 
@@ -735,19 +744,35 @@ def prepare_features_for_initializing_bidirectional_evidence_selector(examples,
         evidence_sampling_num = evidence_sampling_num if evidence_sampling_num <= len(
             per_example_options_prob_diff) else len(per_example_options_prob_diff)
 
-        sorted_sents_by_positive_score = sorted(per_example_options_prob_diff.items(), key=lambda x: abs(min(x[1])),
-                                                reverse=True)
-        sorted_sents_by_negative_score = sorted(per_example_options_prob_diff.items(), key=lambda x: max(x[1]),
-                                                reverse=True)
+        if polarity_by_answer == "none" or polarity_by_answer == "remove":
+            sorted_sents_by_positive_score = sorted(per_example_options_prob_diff.items(), key=lambda x: abs(min(x[1])),
+                                                    reverse=True)
+            sorted_sents_by_negative_score = sorted(per_example_options_prob_diff.items(), key=lambda x: max(x[1]),
+                                                    reverse=True)
+        elif polarity_by_answer == "force":
+            sorted_sents_by_positive_score = sorted(per_example_options_prob_diff.items(), key=lambda x: -x[1][qa_label],
+                                                    reverse=True)
+            sorted_sents_by_negative_score = sorted(per_example_options_prob_diff.items(),
+                                                    key=lambda x: max([logit for j, logit in enumerate(x[1]) if j != qa_label]),
+                                                    reverse=True)
 
         positive_evidence_set = []
         for positive_evidence, evidence_score in sorted_sents_by_positive_score[: evidence_sampling_num]:
             sent_start = per_example_sent_starts[positive_evidence]
             sent_end = per_example_sent_starts[positive_evidence + 1]
             evidence_sent = full_context[sent_start: sent_end]
+
             if np.min(evidence_score) >= 0:
                 continue
-            option_for_evidence = np.argmin(evidence_score)
+            if polarity_by_answer == "force":
+                option_for_evidence = qa_label
+                if evidence_score[qa_label] >= 0:
+                    continue
+            else:
+                option_for_evidence = np.argmin(evidence_score)
+                if polarity_by_answer == "remove" and option_for_evidence != qa_label:
+                    continue
+
             option = process_text(options[i][option_for_evidence])
             qa_concat = processed_question + "[SEP]"
             qa_concat += option
@@ -756,15 +781,25 @@ def prepare_features_for_initializing_bidirectional_evidence_selector(examples,
             qa_list.append(qa_concat)
             labels.append(1)
             positive_evidence_set.append(positive_evidence)
+            all_example_ids.append(example_id+f'_{positive_evidence}_{option_for_evidence}')
 
         negative_evidence_set = []
         for negative_evidence, evidence_score in sorted_sents_by_negative_score[: evidence_sampling_num]:
             sent_start = per_example_sent_starts[negative_evidence]
             sent_end = per_example_sent_starts[negative_evidence + 1]
             evidence_sent = full_context[sent_start: sent_end]
+
             if np.max(evidence_score) <= 0:
                 continue
-            option_for_evidence = np.argmax(evidence_score)
+            if polarity_by_answer == "force":
+                option_for_evidence = np.argmax([logit if j != qa_label else -100 for j, logit in enumerate(evidence_score)])
+                if evidence_score[option_for_evidence] <= 0:
+                    continue
+            else:
+                option_for_evidence = np.argmax(evidence_score)
+                if polarity_by_answer == "remove" and option_for_evidence == qa_label:
+                    continue
+
             option = process_text(options[i][option_for_evidence])
             qa_concat = processed_question + "[SEP]"
             qa_concat += option
@@ -773,6 +808,7 @@ def prepare_features_for_initializing_bidirectional_evidence_selector(examples,
             qa_list.append(qa_concat)
             labels.append(2)
             negative_evidence_set.append(negative_evidence)
+            all_example_ids.append(example_id + f'_{negative_evidence}_{option_for_evidence}')
 
         all_irre_sent_idxs = list(filter(lambda x: x not in positive_evidence_set + negative_evidence_set,
                                          list(range(len(per_example_sent_starts) - 1))))
@@ -798,6 +834,7 @@ def prepare_features_for_initializing_bidirectional_evidence_selector(examples,
                 processed_contexts.append(irre_sent)
                 qa_list.append(qa_concat)
                 labels.append(0)
+                all_example_ids.append(example_id + f'_{irre_sent_idx}_{irre_options[idx]}')
 
     tokenized_examples = tokenizer(
         processed_contexts,
@@ -808,6 +845,7 @@ def prepare_features_for_initializing_bidirectional_evidence_selector(examples,
     )
 
     tokenized_examples['label'] = labels
+    tokenized_examples['example_ids'] = all_example_ids
 
     # Un-flatten
     return tokenized_examples

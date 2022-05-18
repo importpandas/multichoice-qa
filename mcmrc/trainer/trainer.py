@@ -707,6 +707,7 @@ class Trainer:
             eval_dataset,
             feature_func_for_evidence_generating,
             feature_func_for_evidence_reading,
+            max_evidence_len=1,
     ) -> Dict[str, float]:
         """
         Run evaluation and returns metrics.
@@ -744,7 +745,7 @@ class Trainer:
 
         metrics = {}
         all_evidence_sentence = {}
-        for evidence_len in [1, 2, 3]:
+        for evidence_len in range(1, max_evidence_len + 1):
             pprepare_feature_for_evidence_reading = partial(feature_func_for_evidence_reading,
                                                             evidence_len=evidence_len,
                                                             evidence_logits=evidence_logits)
