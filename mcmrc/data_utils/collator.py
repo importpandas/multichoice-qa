@@ -105,18 +105,20 @@ class DataCollatorForMultipleChoice:
     def __call__(self, features):
         label_name = "label" if "label" in features[0].keys() else "labels"
         labels = [feature.pop(label_name) for feature in features]
-        if "example_ids" in features[0].keys():
-            example_ids = [feature.pop("example_ids") for feature in features]
-        else:
-            example_ids = None
-        if "competitive_scores" in features[0].keys():
-            competitive_scores = [feature.pop("competitive_scores") for feature in features]
-        else:
-            competitive_scores = None
+
+        example_ids = [feature.pop("example_ids") for feature in features] \
+            if "example_ids" in features[0].keys() else None
+        competitive_scores = [feature.pop("competitive_scores") for feature in features] \
+            if "competitive_scores" in features[0].keys() else None
+        positive_mask = [feature.pop("positive_mask") for feature in features] \
+            if 'positive_mask' in features[0].keys() else None
+        negative_mask = [feature.pop("negative_mask") for feature in features] \
+            if 'negative_mask' in features[0].keys() else None
+
         batch_size = len(features)
         num_choices = len(features[0]["input_ids"])
         flattened_features = [
-            [{k: v[i] for k, v in feature.items()} for i in range(num_choices)] for feature in features
+            [{k: v[i] for k, v in feature.items() if k not in ["positive_mask", "negative_mask"]} for i in range(num_choices)] for feature in features
         ]
         flattened_features = sum(flattened_features, [])
 
@@ -136,6 +138,14 @@ class DataCollatorForMultipleChoice:
             batch["example_ids"] = example_ids
         if competitive_scores is not None:
             batch["competitive_scores"] = torch.tensor(competitive_scores, dtype=torch.float32)
+        if positive_mask is not None:
+            max_length = batch['attention_mask'].shape[-1]
+            positive_mask = list(map(lambda x: [l+[0] * (max_length - len(l)) for l in x], positive_mask))
+            batch["positive_mask"] = torch.tensor(positive_mask, dtype=torch.float32)
+        if negative_mask is not None:
+            max_length = batch['attention_mask'].shape[-1]
+            negative_mask = list(map(lambda x: [l+[0] * (max_length - len(l)) for l in x], negative_mask))
+            batch["negative_mask"] = torch.tensor(negative_mask, dtype=torch.float32)
 
         return batch
 

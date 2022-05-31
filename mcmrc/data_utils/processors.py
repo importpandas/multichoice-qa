@@ -34,11 +34,13 @@ def load_evidence_logits(evidence_logits_path):
     return evidence_logits
 
 
-def load_exp_race_data(exp_race_file):
+def load_exp_race_data(exp_race_file, load_evidence=False):
     print(exp_race_file)
     all_examples = dict.fromkeys(["example_id", "article", 'article_sent_start', "question", "answer", "options"], None)
     for k in all_examples.keys():
         all_examples[k] = []
+    if load_evidence:
+        all_examples['evidence'] = []
     less_option_num = 0
     with open(exp_race_file) as f:
         race_data = json.load(f)['data']
@@ -49,6 +51,13 @@ def load_exp_race_data(exp_race_file):
             article = process_text(data["article"])
             doc = nlp(article)
             article_sent_start = [sent.start_char for sent in doc.sents]
+
+            if load_evidence:
+                if 'evidences' in data:
+                    evidences = data['evidences']
+                else:
+                    evidences = [''] * len(answers)
+
             for i in range(len(questions)):
                 question = questions[i]
                 question = re.sub("(_+ _+)", "_", question)
@@ -63,6 +72,8 @@ def load_exp_race_data(exp_race_file):
                 all_examples["question"].append(question)
                 all_examples["answer"].append(answer)
                 all_examples["options"].append(option)
+                if load_evidence:
+                    all_examples["evidence"].append(evidences[i])
                 # if len(all_examples["example_id"]) > 4:
                 #     return all_examples
     print(f"total {len(all_examples['example_id'])} less {less_option_num}")
@@ -1345,6 +1356,123 @@ def prepare_features_for_bidirectional_answer_verifier(
 
     # Un-flatten
     return tokenized_examples
+
+
+def prepare_features_for_eve_mrc(
+        examples,
+        evidence_logits=None,
+        evidence_len=3,
+        tokenizer=None,
+        data_args=None):
+
+    contexts = examples['article']
+    answers = examples['answer']
+    options = examples['options']
+    questions = examples['question']
+    example_ids = examples['example_id']
+    sent_starts = examples['article_sent_start']
+
+    num_choices = len(options[0])
+
+    features = {'input_ids': [], 'attention_mask': [], 'token_type_ids': [], 'example_ids': [],
+                'label': [], 'positive_mask': [], 'negative_mask': [], 'evidence': []}
+
+    for i in range(len(answers)):
+        processed_context = contexts[i]
+        example_id = example_ids[i]
+        label = ord(answers[i]) - ord("A")
+        question = process_text(questions[i])
+        per_example_sent_starts = sent_starts[i]
+        per_example_sent_ends = [char_idx - 1 for char_idx in per_example_sent_starts[1:]] + [
+            len(processed_context) - 1]
+
+        tokens_char_span = tokenizer(processed_context, return_offsets_mapping=True, add_special_tokens=False)[
+            'offset_mapping']
+        all_chars_to_start_chars, all_chars_to_end_chars = get_orig_chars_to_bounded_chars_mapping(tokens_char_span,
+                                                                                                   len(processed_context))
+
+        sent_num = len(evidence_logits[example_ids[i] + '_' + str(0)])
+        evidence_len = evidence_len if evidence_len <= sent_num else sent_num
+
+        choices_inputs = []
+        for j in range(num_choices):
+            option = process_text(options[i][j])
+            optionwise_example_id = example_ids[i] + '_' + str(j)
+
+            per_example_evidence_logits = evidence_logits[optionwise_example_id]
+
+            evidence_len = evidence_len if evidence_len <= sent_num else sent_num
+            sorted_sents_by_positive_score = sorted(per_example_evidence_logits.items(), key=lambda x: x[1][1],
+                                                    reverse=True)
+            sorted_sents_by_negative_score = sorted(per_example_evidence_logits.items(), key=lambda x: x[1][2],
+                                                    reverse=True)
+
+            # positive_mask =
+
+            qa_cat = concat_question_option(question, option, dataset=data_args.dataset)
+            qa_cat = " ".join(whitespace_tokenize(qa_cat)[- data_args.max_qa_length:])
+
+            inputs = tokenizer(
+                processed_context,
+                qa_cat,
+                truncation="only_first",
+                max_length=512,
+                padding="max_length" if data_args.pad_to_max_length else False,
+            )
+
+            # positive_mask = inputs['token_type_ids']
+
+            def _get_evidence_mask(sorted_sents_by_evi_score, evidence_len):
+                input_ids = inputs['input_ids']
+                evidence_mask = np.array(inputs['token_type_ids'])
+                evidence_mask[0] = 1
+                evidence = None
+                for evidence_idx, evidence_score in sorted_sents_by_evi_score[: evidence_len]:
+                    sent_start = per_example_sent_starts[evidence_idx]
+                    sent_end = per_example_sent_ends[evidence_idx]
+                    evidence = processed_context[sent_start: sent_end + 1] if evidence is None else evidence
+                    new_sent_start, new_sent_end = all_chars_to_start_chars[sent_start], all_chars_to_end_chars[
+                        sent_end]
+                    # print(sent_start, sent_end, new_sent_start, new_sent_end)
+                    if not (inputs.char_to_token(0, new_sent_start) and inputs.char_to_token(0, new_sent_end)):
+                        continue
+                    token_start = inputs.char_to_token(0, new_sent_start)
+                    token_end = inputs.char_to_token(0, new_sent_end)
+                    evidence_mask[token_start: token_end] = 1
+                    #print(processed_context[sent_start: sent_end], tokenizer.convert_ids_to_tokens
+                    #        (input_ids[token_start: token_end]))
+                return evidence_mask.tolist(), evidence
+
+            positive_mask, positive_evidence = _get_evidence_mask(sorted_sents_by_positive_score, evidence_len)
+            negative_mask, negative_evidence = _get_evidence_mask(sorted_sents_by_negative_score, evidence_len)
+            assert len(positive_mask) == len(negative_mask) == len(inputs['attention_mask'])
+            # print(positive_mask, negative_mask)
+            inputs['positive_mask'] = positive_mask
+            inputs['negative_mask'] = negative_mask
+            inputs['evidence'] = [positive_evidence, negative_evidence]
+
+            # question_ids = filter(lambda x: token_type_ids[x[0]], enumerate(input_ids))
+            choices_inputs.append(inputs)
+
+        input_ids = [x["input_ids"] for x in choices_inputs]
+        attention_mask = [x["attention_mask"] for x in choices_inputs]
+        token_type_ids = [x["token_type_ids"] for x in choices_inputs]
+        positive_mask = [x["positive_mask"] for x in choices_inputs]
+        negative_mask = [x["negative_mask"] for x in choices_inputs]
+        evidence = [x["evidence"] for x in choices_inputs]
+
+        features['input_ids'].append(input_ids)
+        features['attention_mask'].append(attention_mask)
+        features['token_type_ids'].append(token_type_ids)
+        features['example_ids'].append(example_id)
+        features['label'].append(label)
+        features['positive_mask'].append(positive_mask)
+        features['negative_mask'].append(negative_mask)
+        features['evidence'].append(evidence)
+
+    # Un-flatten
+    return features
+
 
 
 def prepare_features_for_answer_verifier(
