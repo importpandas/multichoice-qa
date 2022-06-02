@@ -106,12 +106,12 @@ class EveForMultipleChoice(BertPreTrainedModel):
         super().__init__(config)
 
         if config.model_type == 'bert':
-            self.bert = BertModel(config)
+            self.bert = BertModel(config, add_pooling_layer=False)
             classifier_dropout = (
                 config.classifier_dropout if config.classifier_dropout is not None else config.hidden_dropout_prob
             )
         elif config.model_type == 'albert':
-            self.albert = AlbertModel(config)
+            self.albert = AlbertModel(config, add_pooling_layer=False)
             classifier_dropout = config.classifier_dropout_prob
 
         self.dropout = nn.Dropout(classifier_dropout)

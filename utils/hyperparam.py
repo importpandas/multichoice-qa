@@ -97,6 +97,8 @@ def hyperparam_path_for_eve_mrc(model_args, data_args, training_args):
         exp_name += f'__eve_head_num_{model_args.eve_head_num}'
         exp_name += f'__eve_att_head_{model_args.eve_att_head}'
         exp_name += f'__pool_type_{model_args.output_pooling_type}'
+        if training_args.large_learning_rate > 0:
+            exp_name += f'__large_lr_{training_args.large_learning_rate}'
 
     exp_path = os.path.join(training_args.output_dir, dataset_name, model_type, exp_name, now_time)
 

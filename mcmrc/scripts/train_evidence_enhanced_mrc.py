@@ -163,6 +163,8 @@ class AllTrainingArguments(TrainingArguments):
     eval_on_exp_race: bool = field(
         default=False,
         metadata={"help": "Whether to evaluate answer verifier or evidence selector on Exp RACE dev set."})
+    large_learning_rate: float = field(default=0, metadata={"help": "The initial learning rate for unpretrained layers"
+                                                              ", e.g, classifier or eve layer"})
 
 
 def main():

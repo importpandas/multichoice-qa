@@ -146,6 +146,7 @@ class Trainer:
 
         self.weight_decay = args.weight_decay
         self.learning_rate = args.learning_rate
+        self.large_learning_rate = args.large_learning_rate
         self.layerwise_lr_decay = 1
         self.adam_epsilon = args.adam_epsilon
         self.max_grad_norm = args.max_grad_norm
@@ -168,14 +169,19 @@ class Trainer:
     def _build_optimizer(self):
         # Local optimizer
         no_decay = ["bias", "LayerNorm.weight"]
-        large_lr = ['classifier']
+        large_lr = ['classifier', 'pooler', 'eve_layer']
         if self.layerwise_lr_decay == 1:
-            optimizer_grouped_parameters = [
-                {'params': [p for n, p in self.model.named_parameters() if not any(nd in n for nd in no_decay)],
-                 'weight_decay': self.weight_decay},
-                {'params': [p for n, p in self.model.named_parameters() if any(nd in n for nd in no_decay)],
-                 'weight_decay': 0.0}
-            ]
+            optimizer_grouped_parameters = []
+            for n, p in self.model.named_parameters():
+                params_group = {}
+                params_group['params'] = p
+                params_group['weight_decay'] = 0.0 if any(nd in n for nd in no_decay) or any(
+                    ll in n for ll in large_lr) else self.weight_decay
+                if self.large_learning_rate > 0 and any(ll in n for ll in large_lr):
+                    params_group['lr'] = max(self.large_learning_rate, self.learning_rate)
+                else:
+                    params_group['lr'] = self.learning_rate
+                optimizer_grouped_parameters.append(params_group)
         else:
             optimizer_grouped_parameters = []
             for n, p in self.model.named_parameters():
@@ -183,7 +189,7 @@ class Trainer:
                 params_group['params'] = p
                 params_group['weight_decay'] = 0.0 if any(nd in n for nd in no_decay) or any(
                     ll in n for ll in large_lr) else self.weight_decay
-                if any(ll in n for ll in large_lr):
+                if self.large_learning_rate > 0 and any(ll in n for ll in large_lr):
                     params_group['lr'] = max(1e-3, self.learning_rate)
                 else:
                     if 'electra.embedding' in n or 'bert.embedding' in n:
