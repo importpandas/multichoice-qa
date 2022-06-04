@@ -1401,7 +1401,6 @@ def prepare_features_for_eve_mrc(
 
             per_example_evidence_logits = evidence_logits[optionwise_example_id]
 
-            evidence_len = evidence_len if evidence_len <= sent_num else sent_num
             sorted_sents_by_positive_score = sorted(per_example_evidence_logits.items(), key=lambda x: x[1][1],
                                                     reverse=True)
             sorted_sents_by_negative_score = sorted(per_example_evidence_logits.items(), key=lambda x: x[1][2],
@@ -1422,15 +1421,19 @@ def prepare_features_for_eve_mrc(
 
             # positive_mask = inputs['token_type_ids']
 
-            def _get_evidence_mask(sorted_sents_by_evi_score, evidence_len):
-                input_ids = inputs['input_ids']
+            evidence_len = evidence_len if evidence_len <= sent_num and not data_args.dynamic_evidence_len else sent_num
+
+            def _get_evidence_mask(sorted_sents_by_evi_score, evidence_len, polarity="positive"):
                 evidence_mask = np.array(inputs['token_type_ids'])
                 evidence_mask[0] = 1
-                evidence = None
+                evidence_sent = ""
+                polarity_to_idx = {'positive': 1, 'negative': 2, 'non_evi': 0}
                 for evidence_idx, evidence_score in sorted_sents_by_evi_score[: evidence_len]:
+                    if data_args.dynamic_evidence_len and np.argmax(evidence_score) != polarity_to_idx[polarity]:
+                        continue
                     sent_start = per_example_sent_starts[evidence_idx]
                     sent_end = per_example_sent_ends[evidence_idx]
-                    evidence = processed_context[sent_start: sent_end + 1] if evidence is None else evidence
+                    evidence_sent = processed_context[sent_start: sent_end + 1] if evidence_sent == "" else evidence_sent
                     new_sent_start, new_sent_end = all_chars_to_start_chars[sent_start], all_chars_to_end_chars[
                         sent_end]
                     # print(sent_start, sent_end, new_sent_start, new_sent_end)
@@ -1441,10 +1444,10 @@ def prepare_features_for_eve_mrc(
                     evidence_mask[token_start: token_end] = 1
                     #print(processed_context[sent_start: sent_end], tokenizer.convert_ids_to_tokens
                     #        (input_ids[token_start: token_end]))
-                return evidence_mask.tolist(), evidence
+                return evidence_mask.tolist(), evidence_sent
 
-            positive_mask, positive_evidence = _get_evidence_mask(sorted_sents_by_positive_score, evidence_len)
-            negative_mask, negative_evidence = _get_evidence_mask(sorted_sents_by_negative_score, evidence_len)
+            positive_mask, positive_evidence = _get_evidence_mask(sorted_sents_by_positive_score, evidence_len, polarity="positive")
+            negative_mask, negative_evidence = _get_evidence_mask(sorted_sents_by_negative_score, evidence_len, polarity="negative")
             assert len(positive_mask) == len(negative_mask) == len(inputs['attention_mask'])
             # print(positive_mask, negative_mask)
             inputs['positive_mask'] = positive_mask

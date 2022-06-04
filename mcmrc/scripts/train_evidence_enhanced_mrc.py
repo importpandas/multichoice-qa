@@ -135,6 +135,12 @@ class DataTrainingArguments(BasicDataTrainingArguments):
             "help": "number of evidence sentences for each choice during evidence competition "
         },
     )
+    dynamic_evidence_len: bool = field(
+        default=False,
+        metadata={
+            "help": "Whether to select evidence num according to prediction of evidence selector"
+        },
+    )
     train_verifier_with_non_overlapping_evidence: bool = field(
         default=False,
         metadata={

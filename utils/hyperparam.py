@@ -92,7 +92,10 @@ def hyperparam_path_for_eve_mrc(model_args, data_args, training_args):
         exp_name = re.sub(r"__epoch_[\d.]+", "", exp_name)
         # if not training_args.train_evidence_selector:
         #     exp_name += f'__evi_sam_num_{data_args.evidence_sampling_num}'
-        exp_name += f'__veri_evi_len_{data_args.verifier_evidence_len}'
+        if data_args.dynamic_evidence_len:
+            exp_name += f'__dynamic_evi_len_{data_args.dynamic_evidence_len}'
+        else:
+            exp_name += f'__veri_evi_len_{data_args.verifier_evidence_len}'
         exp_name += f'__eve_layer_{model_args.num_eve_layers}'
         exp_name += f'__eve_head_num_{model_args.eve_head_num}'
         exp_name += f'__eve_att_head_{model_args.eve_att_head}'
