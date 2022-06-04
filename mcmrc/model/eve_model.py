@@ -4,7 +4,8 @@ import torch
 import torch.nn as nn
 from torch.nn import CrossEntropyLoss
 from transformers.modeling_outputs import BaseModelOutputWithPastAndCrossAttentions
-from transformers.models.bert.modeling_bert import BertPreTrainedModel, BertEncoder, BertLayer
+from transformers.models.bert.modeling_bert import BertPreTrainedModel, BertEncoder, BertLayer, BertIntermediate, BertOutput
+from .bert_layer_with_relation import BertLayerWithRelation
 from transformers import PretrainedConfig, AutoConfig, AutoModelForQuestionAnswering
 from transformers.models.albert.modeling_albert import (
     AlbertPreTrainedModel,
@@ -22,12 +23,16 @@ class EveEncoder(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
-        self.layer = nn.ModuleList([BertLayer(config) for _ in range(config.num_eve_layers)])
+        if config.eve_with_relation_embedding:
+            self.layer = nn.ModuleList([BertLayerWithRelation(config) for _ in range(config.num_eve_layers)])
+        else:
+            self.layer = nn.ModuleList([BertLayer(config) for _ in range(config.num_eve_layers)])
         self.gradient_checkpointing = False
 
     def forward(
             self,
             hidden_states,
+            evidence_type=None,
             attention_mask=None,
             head_mask=None,
             encoder_hidden_states=None,
@@ -50,15 +55,27 @@ class EveEncoder(nn.Module):
             layer_head_mask = head_mask[i] if head_mask is not None else None
             past_key_value = past_key_values[i] if past_key_values is not None else None
 
-            layer_outputs = layer_module(
-                hidden_states,
-                attention_mask,
-                layer_head_mask,
-                encoder_hidden_states,
-                encoder_attention_mask,
-                past_key_value,
-                output_attentions,
-            )
+            if self.config.eve_with_relation_embedding:
+                layer_outputs = layer_module(
+                    hidden_states,
+                    evidence_type,
+                    attention_mask,
+                    layer_head_mask,
+                    encoder_hidden_states,
+                    encoder_attention_mask,
+                    past_key_value,
+                    output_attentions,
+                )
+            else:
+                layer_outputs = layer_module(
+                    hidden_states,
+                    attention_mask,
+                    layer_head_mask,
+                    encoder_hidden_states,
+                    encoder_attention_mask,
+                    past_key_value,
+                    output_attentions,
+                )
 
             hidden_states = layer_outputs[0]
             if use_cache:
@@ -117,11 +134,14 @@ class EveForMultipleChoice(BertPreTrainedModel):
         self.dropout = nn.Dropout(classifier_dropout)
         self.classifier = nn.Linear(config.hidden_size, 1)
 
-        self.positive_head_num = sum([int(i) for i in re.findall("p(\d+)", config.eve_att_head)])
-        self.negative_head_num = sum([int(i) for i in re.findall("n(\d+)", config.eve_att_head)])
-        self.full_head_num = sum([int(i) for i in re.findall("f(\d+)", config.eve_att_head)])
-        self.competitive_head_num = sum([int(i) for i in re.findall("c(\d+)", config.eve_att_head)])
-        assert self.positive_head_num + self.negative_head_num + self.full_head_num + self.competitive_head_num == config.eve_head_num
+        if not config.eve_with_relation_embedding:
+            self.positive_head_num = sum([int(i) for i in re.findall("p(\d+)", config.eve_att_head)])
+            self.negative_head_num = sum([int(i) for i in re.findall("n(\d+)", config.eve_att_head)])
+            self.full_head_num = sum([int(i) for i in re.findall("f(\d+)", config.eve_att_head)])
+            self.competitive_head_num = sum([int(i) for i in re.findall("c(\d+)", config.eve_att_head)])
+            assert self.positive_head_num + self.negative_head_num + self.full_head_num + self.competitive_head_num == config.eve_head_num
+        else:
+            self.full_head_num = config.eve_head_num
 
         config.num_attention_heads = config.eve_head_num
         if config.num_eve_layers > 0:
@@ -145,6 +165,7 @@ class EveForMultipleChoice(BertPreTrainedModel):
         attention_mask=None,
         token_type_ids=None,
         position_ids=None,
+        evidence_type=None,
         positive_mask=None,
         negative_mask=None,
         head_mask=None,
@@ -168,6 +189,7 @@ class EveForMultipleChoice(BertPreTrainedModel):
         attention_mask = attention_mask.view(-1, attention_mask.size(-1)) if attention_mask is not None else None
         positive_mask = positive_mask.view(-1, positive_mask.size(-1)) if positive_mask is not None else None
         negative_mask = negative_mask.view(-1, negative_mask.size(-1)) if negative_mask is not None else None
+        evidence_type = evidence_type.view(-1, evidence_type.size(-1)) if evidence_type is not None else None
         token_type_ids = token_type_ids.view(-1, token_type_ids.size(-1)) if token_type_ids is not None else None
         position_ids = position_ids.view(-1, position_ids.size(-1)) if position_ids is not None else None
         inputs_embeds = (
@@ -194,29 +216,32 @@ class EveForMultipleChoice(BertPreTrainedModel):
         extended_default_mask = default_attention_mask.expand(-1, self.full_head_num, seq_len, -1)
         eve_attention_mask = extended_default_mask
 
-        def _get_extended_evidence_mask(evidence_mask, default_mask, head_num=1):
-            reverse_evidence_mask = 1 - evidence_mask
-            extended_evidence_mask = evidence_mask.unsqueeze(-1).bmm(evidence_mask.unsqueeze(-2)) \
-                                     + reverse_evidence_mask.unsqueeze(-1).bmm(reverse_evidence_mask.unsqueeze(-2))
-            extended_evidence_mask = convert_mask_to_reality(extended_evidence_mask)
-            extended_evidence_mask = extended_evidence_mask.unsqueeze(1).expand(-1, head_num, -1, -1)
-            return extended_evidence_mask + default_mask
+        if positive_mask is not None and self.eve_layer is not None:
+            def _get_extended_evidence_mask(evidence_mask, default_mask, head_num=1):
+                reverse_evidence_mask = 1 - evidence_mask
+                extended_evidence_mask = evidence_mask.unsqueeze(-1).bmm(evidence_mask.unsqueeze(-2)) \
+                                         + reverse_evidence_mask.unsqueeze(-1).bmm(reverse_evidence_mask.unsqueeze(-2))
+                extended_evidence_mask = convert_mask_to_reality(extended_evidence_mask)
+                extended_evidence_mask = extended_evidence_mask.unsqueeze(1).expand(-1, head_num, -1, -1)
+                return extended_evidence_mask + default_mask
 
-        if positive_mask is not None and self.positive_head_num > 0:
-            extended_positive_mask = _get_extended_evidence_mask(positive_mask, default_attention_mask, self.positive_head_num)
-            eve_attention_mask = torch.cat((eve_attention_mask, extended_positive_mask), dim=1)
+            if self.positive_head_num > 0:
+                extended_positive_mask = _get_extended_evidence_mask(positive_mask, default_attention_mask, self.positive_head_num)
+                eve_attention_mask = torch.cat((eve_attention_mask, extended_positive_mask), dim=1)
 
-        if negative_mask is not None and self.negative_head_num > 0:
-            extended_negative_mask = _get_extended_evidence_mask(negative_mask, default_attention_mask, self.negative_head_num)
-            eve_attention_mask = torch.cat((eve_attention_mask, extended_negative_mask), dim=1)
+            if self.negative_head_num > 0:
+                extended_negative_mask = _get_extended_evidence_mask(negative_mask, default_attention_mask, self.negative_head_num)
+                eve_attention_mask = torch.cat((eve_attention_mask, extended_negative_mask), dim=1)
 
-        if self.competitive_head_num > 0:
-            competitive_mask = torch.logical_or(positive_mask, negative_mask).float()
-            extended_competitive_mask = _get_extended_evidence_mask(competitive_mask, default_attention_mask, self.negative_head_num)
-            eve_attention_mask = torch.cat((eve_attention_mask, extended_competitive_mask), dim=1)
+            if self.competitive_head_num > 0:
+                competitive_mask = torch.logical_or(positive_mask, negative_mask).float()
+                extended_competitive_mask = _get_extended_evidence_mask(competitive_mask, default_attention_mask, self.negative_head_num)
+                eve_attention_mask = torch.cat((eve_attention_mask, extended_competitive_mask), dim=1)
 
-        if self.eve_layer is not None:
             eve_outputs = self.eve_layer(sequence_output, attention_mask=eve_attention_mask, head_mask=head_mask)[0]
+        elif evidence_type is not None and self.eve_layer is not None:
+            eve_outputs = self.eve_layer(sequence_output, evidence_type=evidence_type,
+                                         attention_mask=extended_default_mask, head_mask=head_mask)[0]
         else:
             eve_outputs = sequence_output
 

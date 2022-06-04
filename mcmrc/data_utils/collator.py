@@ -114,6 +114,8 @@ class DataCollatorForMultipleChoice:
             if 'positive_mask' in features[0].keys() else None
         negative_mask = [feature.pop("negative_mask") for feature in features] \
             if 'negative_mask' in features[0].keys() else None
+        evidence_type = [feature.pop("evidence_type") for feature in features] \
+            if 'evidence_type' in features[0].keys() else None
 
         batch_size = len(features)
         num_choices = len(features[0]["input_ids"])
@@ -146,6 +148,10 @@ class DataCollatorForMultipleChoice:
             max_length = batch['attention_mask'].shape[-1]
             negative_mask = list(map(lambda x: [l+[0] * (max_length - len(l)) for l in x], negative_mask))
             batch["negative_mask"] = torch.tensor(negative_mask, dtype=torch.float32)
+        if evidence_type is not None:
+            max_length = batch['attention_mask'].shape[-1]
+            evidence_type = list(map(lambda x: [l+[0] * (max_length - len(l)) for l in x], evidence_type))
+            batch["evidence_type"] = torch.tensor(evidence_type, dtype=torch.float32)
 
         return batch
 

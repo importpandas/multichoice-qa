@@ -1477,6 +1477,130 @@ def prepare_features_for_eve_mrc(
     return features
 
 
+def prepare_features_for_eve_mrc_with_relation_embedding(
+        examples,
+        evidence_logits=None,
+        evidence_len=3,
+        tokenizer=None,
+        data_args=None):
+
+    contexts = examples['article']
+    answers = examples['answer']
+    options = examples['options']
+    questions = examples['question']
+    example_ids = examples['example_id']
+    sent_starts = examples['article_sent_start']
+
+    num_choices = len(options[0])
+
+    features = {'input_ids': [], 'attention_mask': [], 'token_type_ids': [], 'example_ids': [],
+                'label': [], 'evidence_type': [], 'evidence': []}
+
+    for i in range(len(answers)):
+        processed_context = contexts[i]
+        example_id = example_ids[i]
+        label = ord(answers[i]) - ord("A")
+        question = process_text(questions[i])
+        per_example_sent_starts = sent_starts[i]
+        per_example_sent_ends = [char_idx - 1 for char_idx in per_example_sent_starts[1:]] + [
+            len(processed_context) - 1]
+
+        tokens_char_span = tokenizer(processed_context, return_offsets_mapping=True, add_special_tokens=False)[
+            'offset_mapping']
+        all_chars_to_start_chars, all_chars_to_end_chars = get_orig_chars_to_bounded_chars_mapping(tokens_char_span,
+                                                                                                   len(processed_context))
+
+        sent_num = len(evidence_logits[example_ids[i] + '_' + str(0)])
+        evidence_len = evidence_len if evidence_len <= sent_num else sent_num
+
+        choices_inputs = []
+        for j in range(num_choices):
+            option = process_text(options[i][j])
+            optionwise_example_id = example_ids[i] + '_' + str(j)
+
+            per_example_evidence_logits = evidence_logits[optionwise_example_id]
+
+
+            sents_with_evidential_score = {f'{sent_idx}_{polarity}': score
+                                           for sent_idx, sent_logit in per_example_evidence_logits.items()
+                                           for polarity, score in enumerate(sent_logit)}
+            sorted_sents_by_evidential_score = sorted(sents_with_evidential_score.items(), key=lambda x: x[1],
+                                                      reverse=True)
+
+            # positive_mask =
+
+            qa_cat = concat_question_option(question, option, dataset=data_args.dataset)
+            qa_cat = " ".join(whitespace_tokenize(qa_cat)[- data_args.max_qa_length:])
+
+            inputs = tokenizer(
+                processed_context,
+                qa_cat,
+                truncation="only_first",
+                max_length=512,
+                padding="max_length" if data_args.pad_to_max_length else False,
+            )
+
+            positive_evidence, negative_evidence = None, None
+            evidence_len = evidence_len if evidence_len <= sent_num else sent_num
+
+            # 1 means positive evidence, 2 means negative evidence
+            evidence_num = {1: 0, 2: 0}
+            evidence_type = np.array(inputs['token_type_ids'])
+            already_evidence_set = []
+            for evidence_idx_with_polarity, evidence_score in sorted_sents_by_evidential_score:
+                evidence_idx, polarity = evidence_idx_with_polarity.split("_")
+                evidence_idx = int(evidence_idx)
+                polarity = int(polarity)
+                if evidence_idx in already_evidence_set:
+                    continue
+                if polarity == 0:
+                    if data_args.dynamic_evidence_len:
+                        already_evidence_set.append(evidence_idx)
+                    continue
+                if not data_args.dynamic_evidence_len and evidence_num[polarity] >= evidence_len:
+                    continue
+                already_evidence_set.append(evidence_idx)
+                sent_start = per_example_sent_starts[evidence_idx]
+                sent_end = per_example_sent_ends[evidence_idx]
+                if polarity == 1 and positive_evidence is None:
+                    positive_evidence = processed_context[sent_start: sent_end + 1]
+                elif polarity == 2 and negative_evidence is None:
+                    negative_evidence = processed_context[sent_start: sent_end + 1]
+
+                new_sent_start, new_sent_end = all_chars_to_start_chars[sent_start], all_chars_to_end_chars[
+                    sent_end]
+                if not (inputs.char_to_token(0, new_sent_start) and inputs.char_to_token(0, new_sent_end)):
+                    continue
+                token_start = inputs.char_to_token(0, new_sent_start)
+                token_end = inputs.char_to_token(0, new_sent_end)
+                evidence_type[token_start: token_end] = polarity + 1
+                evidence_num[polarity] += 1
+                #print(processed_context[sent_start: sent_end], tokenizer.convert_ids_to_tokens
+                #        (input_ids[token_start: token_end]))
+
+            inputs['evidence_type'] = evidence_type
+            inputs['evidence'] = [positive_evidence, negative_evidence]
+
+            # question_ids = filter(lambda x: token_type_ids[x[0]], enumerate(input_ids))
+            choices_inputs.append(inputs)
+
+        input_ids = [x["input_ids"] for x in choices_inputs]
+        attention_mask = [x["attention_mask"] for x in choices_inputs]
+        token_type_ids = [x["token_type_ids"] for x in choices_inputs]
+        evidence_type = [x["evidence_type"] for x in choices_inputs]
+        evidence = [x["evidence"] for x in choices_inputs]
+
+        features['input_ids'].append(input_ids)
+        features['attention_mask'].append(attention_mask)
+        features['token_type_ids'].append(token_type_ids)
+        features['example_ids'].append(example_id)
+        features['label'].append(label)
+        features['evidence_type'].append(evidence_type)
+        features['evidence'].append(evidence)
+
+    # Un-flatten
+    return features
+
 
 def prepare_features_for_answer_verifier(
         examples,

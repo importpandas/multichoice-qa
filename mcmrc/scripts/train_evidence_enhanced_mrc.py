@@ -57,6 +57,7 @@ from mcmrc.data_utils.processors import (
     prepare_features_for_generating_optionwise_evidence, prepare_features_for_reading_optionwise_evidence,
     prepare_features_for_answer_verifier,
     prepare_features_for_eve_mrc,
+    prepare_features_for_eve_mrc_with_relation_embedding,
     prepare_features,
     load_exp_race_data,
     load_adv_race_data
@@ -96,6 +97,24 @@ class ModelArguments(BasicModelArguments):
         default=12,
         metadata={
             "help": "Total attention head num of eve layers"
+        },
+    )
+    eve_with_relation_embedding: bool = field(
+        default=False,
+        metadata={
+            "help": "Whether to train eve layer with  relative relation embedding"
+        },
+    )
+    relation_type_num: int = field(
+        default=16,
+        metadata={
+            "help": "number of relation type"
+        },
+    )
+    relation_encoding_method: str = field(
+        default='key',
+        metadata={
+            "help": "method to encoding relation: key, key_query, key_value"
         },
     )
     output_pooling_type: str = field(
@@ -230,6 +249,9 @@ def main():
     if data_args.dataset == 'dream':
         training_args.eval_on_exp_race = False
 
+    if model_args.relation_type_num not in [16, 10, 7]:
+        raise ValueError("relation_type_num must be 16, 10 or 7")
+
     # In distributed training, the load_dataset function guarantee that only one local process can concurrently
     # download the dataset.
     # See more about loading any type of standard or custom dataset (from files, python dict, pandas DataFrame, etc) at
@@ -289,6 +311,9 @@ def main():
     answer_verifier_config.num_eve_layers = model_args.num_eve_layers
     answer_verifier_config.eve_att_head = model_args.eve_att_head
     answer_verifier_config.eve_head_num = model_args.eve_head_num
+    answer_verifier_config.eve_with_relation_embedding = model_args.eve_with_relation_embedding
+    answer_verifier_config.relation_type_num = model_args.relation_type_num
+    answer_verifier_config.relation_encoding_method = model_args.relation_encoding_method
 
     if data_args.dataset == 'dream' and type(answer_verifier_config).__name__ == "AlbertConfig":
         answer_verifier_config.pooling_type = "sequence_mean" if not model_args.output_pooling_type \
@@ -310,11 +335,18 @@ def main():
 
     column_names = datasets["train"].column_names
 
-    pprepare_features_for_eve_mrc = partial(
-        prepare_features_for_eve_mrc,
-        evidence_len=data_args.verifier_evidence_len,
-        tokenizer=tokenizer,
-        data_args=data_args)
+    if model_args.eve_with_relation_embedding:
+        pprepare_features_for_eve_mrc = partial(
+            prepare_features_for_eve_mrc_with_relation_embedding,
+            evidence_len=data_args.verifier_evidence_len,
+            tokenizer=tokenizer,
+            data_args=data_args)
+    else:
+        pprepare_features_for_eve_mrc = partial(
+            prepare_features_for_eve_mrc,
+            evidence_len=data_args.verifier_evidence_len,
+            tokenizer=tokenizer,
+            data_args=data_args)
 
     pprepare_features_for_generating_optionwise_evidence = partial(
         prepare_features_for_generating_optionwise_evidence,
