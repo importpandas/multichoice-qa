@@ -117,6 +117,18 @@ class ModelArguments(BasicModelArguments):
             "help": "method to encoding relation: key, key_query, key_value"
         },
     )
+    share_relation_across_head: bool = field(
+        default=True,
+        metadata={
+            "help": "Whether to use shared relation embedding across attention heads"
+        },
+    )
+    share_relation_across_layer: bool = field(
+        default=False,
+        metadata={
+            "help": "Whether to use shared relation embedding across layers"
+        },
+    )
     output_pooling_type: str = field(
         default="",
         metadata={
@@ -314,6 +326,8 @@ def main():
     answer_verifier_config.eve_with_relation_embedding = model_args.eve_with_relation_embedding
     answer_verifier_config.relation_type_num = model_args.relation_type_num
     answer_verifier_config.relation_encoding_method = model_args.relation_encoding_method
+    answer_verifier_config.share_relation_across_head = model_args.share_relation_across_head
+    answer_verifier_config.share_relation_across_layer = model_args.share_relation_across_layer
 
     if data_args.dataset == 'dream' and type(answer_verifier_config).__name__ == "AlbertConfig":
         answer_verifier_config.pooling_type = "sequence_mean" if not model_args.output_pooling_type \

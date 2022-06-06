@@ -5,7 +5,7 @@ import torch.nn as nn
 from torch.nn import CrossEntropyLoss
 from transformers.modeling_outputs import BaseModelOutputWithPastAndCrossAttentions
 from transformers.models.bert.modeling_bert import BertPreTrainedModel, BertEncoder, BertLayer, BertIntermediate, BertOutput
-from .bert_layer_with_relation import BertLayerWithRelation
+from .bert_layer_with_relation import BertLayerWithRelation, RelationEmbedding
 from transformers import PretrainedConfig, AutoConfig, AutoModelForQuestionAnswering
 from transformers.models.albert.modeling_albert import (
     AlbertPreTrainedModel,
@@ -28,6 +28,14 @@ class EveEncoder(nn.Module):
         else:
             self.layer = nn.ModuleList([BertLayer(config) for _ in range(config.num_eve_layers)])
         self.gradient_checkpointing = False
+        if config.share_relation_across_layer:
+            self.relation_k = RelationEmbedding(config)
+            if config.relation_encoding_method == 'key_value':
+                self.relation_v = RelationEmbedding(config)
+        else:
+            self.relation_k = nn.ModuleList([RelationEmbedding(config) for _ in range(config.num_eve_layers)])
+            if config.relation_encoding_method == 'key_value':
+                self.relation_v = nn.ModuleList([RelationEmbedding(config) for _ in range(config.num_eve_layers)])
 
     def forward(
             self,
@@ -56,9 +64,22 @@ class EveEncoder(nn.Module):
             past_key_value = past_key_values[i] if past_key_values is not None else None
 
             if self.config.eve_with_relation_embedding:
+                if self.config.share_relation_across_layer:
+                    relation_embedding_k = self.relation_k(evidence_type)
+                    if self.config.relation_encoding_method == 'key_value':
+                        relation_embedding_v = self.relation_v(evidence_type)
+                    else:
+                        relation_embedding_v = None
+                else:
+                    relation_embedding_k = self.relation_k[i](evidence_type)
+                    if self.config.relation_encoding_method == 'key_value':
+                        relation_embedding_v = self.relation_v[i](evidence_type)
+                    else:
+                        relation_embedding_v = None
                 layer_outputs = layer_module(
                     hidden_states,
-                    evidence_type,
+                    relation_embedding_k,
+                    relation_embedding_v,
                     attention_mask,
                     layer_head_mask,
                     encoder_hidden_states,

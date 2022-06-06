@@ -30,7 +30,10 @@ class RelationEmbedding(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.attention_head_size = int(config.hidden_size / config.num_attention_heads)
-        self.relation_embedding = nn.Embedding(config.relation_type_num, self.attention_head_size)
+        if config.share_relation_across_head:
+            self.relation_embedding = nn.Embedding(config.relation_type_num, self.attention_head_size)
+        else:
+            self.relation_embedding = nn.Embedding(config.relation_type_num, config.hidden_size)
         self.relation_type_num = config.relation_type_num
         # self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         # self.dropout = nn.Dropout(config.hidden_dropout_prob)
@@ -38,29 +41,30 @@ class RelationEmbedding(nn.Module):
     def forward(
             self, evidence_type
     ):
-        if self.relation_type_num == 16:
-            relation_matrix = (evidence_type.unsqueeze(-1) * 4 + evidence_type.unsqueeze(-2)).long()
-        elif self.relation_type_num == 10:
-            m1 = evidence_type.unsqueeze(-1) * 4 + evidence_type.unsqueeze(-2) - (
-                        evidence_type * (evidence_type + 1) / 2).unsqueeze(-1)
-            # print(evidence_type.unsqueeze(-1) * 4 + evidence_type.unsqueeze(-2))
-            # print((evidence_type * (evidence_type + 1)).unsqueeze(-1))
-            # print(m1)
-            m2 = evidence_type.unsqueeze(-1) + evidence_type.unsqueeze(-2) * 4 - (
-                        evidence_type * (evidence_type + 1) / 2).unsqueeze(-2)
-            # print(m2)
-            relation_matrix = torch.where(evidence_type.unsqueeze(-1) <= evidence_type.unsqueeze(-2), m1, m2).long()
-        elif self.relation_type_num == 7:
-            m1 = evidence_type.unsqueeze(-1) * 4 + evidence_type.unsqueeze(-2) - (
-                        evidence_type * (evidence_type + 1) / 2).unsqueeze(-1)
-            m1 = m1 - evidence_type.unsqueeze(-1)
-            m2 = evidence_type.unsqueeze(-1) + evidence_type.unsqueeze(-2) * 4 - (
-                        evidence_type * (evidence_type + 1) / 2).unsqueeze(-2)
-            m2 = m2 - evidence_type.unsqueeze(-2)
-            relation_matrix = torch.where(evidence_type.unsqueeze(-1) <= evidence_type.unsqueeze(-2), m1, m2).long()
-            # relation_matrix -= evidence_type.unsqueeze(-1)
-            relation_matrix = torch.where(evidence_type.unsqueeze(-1) == evidence_type.unsqueeze(-2), 0,
-                                          relation_matrix).long()
+        with torch.no_grad():
+            if self.relation_type_num == 16:
+                relation_matrix = (evidence_type.unsqueeze(-1) * 4 + evidence_type.unsqueeze(-2)).long()
+            elif self.relation_type_num == 10:
+                m1 = evidence_type.unsqueeze(-1) * 4 + evidence_type.unsqueeze(-2) - (
+                            evidence_type * (evidence_type + 1) / 2).unsqueeze(-1)
+                # print(evidence_type.unsqueeze(-1) * 4 + evidence_type.unsqueeze(-2))
+                # print((evidence_type * (evidence_type + 1)).unsqueeze(-1))
+                # print(m1)
+                m2 = evidence_type.unsqueeze(-1) + evidence_type.unsqueeze(-2) * 4 - (
+                            evidence_type * (evidence_type + 1) / 2).unsqueeze(-2)
+                # print(m2)
+                relation_matrix = torch.where(evidence_type.unsqueeze(-1) <= evidence_type.unsqueeze(-2), m1, m2).long()
+            elif self.relation_type_num == 7:
+                m1 = evidence_type.unsqueeze(-1) * 4 + evidence_type.unsqueeze(-2) - (
+                            evidence_type * (evidence_type + 1) / 2).unsqueeze(-1)
+                m1 = m1 - evidence_type.unsqueeze(-1)
+                m2 = evidence_type.unsqueeze(-1) + evidence_type.unsqueeze(-2) * 4 - (
+                            evidence_type * (evidence_type + 1) / 2).unsqueeze(-2)
+                m2 = m2 - evidence_type.unsqueeze(-2)
+                relation_matrix = torch.where(evidence_type.unsqueeze(-1) <= evidence_type.unsqueeze(-2), m1, m2).long()
+                # relation_matrix -= evidence_type.unsqueeze(-1)
+                relation_matrix = torch.where(evidence_type.unsqueeze(-1) == evidence_type.unsqueeze(-2), 0,
+                                              relation_matrix).long()
 
         embeddings = self.relation_embedding(relation_matrix)
         # embeddings = self.LayerNorm(embeddings)
@@ -85,10 +89,8 @@ class BertSelfAttentionWithRelation(nn.Module):
         self.key = nn.Linear(config.hidden_size, self.all_head_size)
         self.value = nn.Linear(config.hidden_size, self.all_head_size)
 
-        self.relation_k = RelationEmbedding(config)
         self.relation_encoding_method = config.relation_encoding_method
-        if config.relation_encoding_method == 'key_value':
-            self.relation_v = RelationEmbedding(config)
+        self.share_relation_across_head = config.share_relation_across_head
 
         self.dropout = nn.Dropout(config.attention_probs_dropout_prob)
         self.position_embedding_type = position_embedding_type or getattr(
@@ -108,7 +110,8 @@ class BertSelfAttentionWithRelation(nn.Module):
     def forward(
         self,
         hidden_states,
-        evidence_type,
+        relation_embedding_k,
+        relation_embedding_v=None,
         attention_mask=None,
         head_mask=None,
         encoder_hidden_states=None,
@@ -156,14 +159,27 @@ class BertSelfAttentionWithRelation(nn.Module):
         # Take the dot product between "query" and "key" to get the raw attention scores.
         attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))
 
-        relation_embedding_k = self.relation_k(evidence_type)
-
-        if self.relation_encoding_method == "key":
-            relation_scores = torch.einsum("bhld,blrd->bhlr", query_layer, relation_embedding_k)
+        if self.relation_encoding_method in ["key", "key_value"]:
+            if self.share_relation_across_head:
+                relation_scores = torch.einsum("bhld,blrd->bhlr", query_layer, relation_embedding_k)
+            else:
+                relation_embedding_k = relation_embedding_k.view(relation_embedding_k.shape[0],
+                                                                 relation_embedding_k.shape[1],
+                                                                 relation_embedding_k.shape[2],
+                                                                 self.num_attention_heads, -1).permute(0, 3, 1, 2, 4)
+                relation_scores = torch.einsum("bhld,bhlrd->bhlr", query_layer, relation_embedding_k)
             attention_scores = attention_scores + relation_scores
         elif self.relation_encoding_method == "key_query":
-            relation_scores_query = torch.einsum("bhld,blrd->bhlr", query_layer, relation_embedding_k)
-            relation_scores_key = torch.einsum("bhrd,blrd->bhlr", key_layer, relation_embedding_k)
+            if self.share_relation_across_head:
+                relation_scores_query = torch.einsum("bhld,blrd->bhlr", query_layer, relation_embedding_k)
+                relation_scores_key = torch.einsum("bhrd,blrd->bhlr", key_layer, relation_embedding_k)
+            else:
+                relation_embedding_k = relation_embedding_k.view(relation_embedding_k.shape[0],
+                                                                 relation_embedding_k.shape[1],
+                                                                 relation_embedding_k.shape[2],
+                                                                 self.num_attention_heads, -1).permute(0, 3, 1, 2, 4)
+                relation_scores_query = torch.einsum("bhld,bhlrd->bhlr", query_layer, relation_embedding_k)
+                relation_scores_key = torch.einsum("bhld,bhlrd->bhlr", key_layer, relation_embedding_k)
             attention_scores = attention_scores + relation_scores_query + relation_scores_key
 
         attention_scores = attention_scores / math.sqrt(self.attention_head_size)
@@ -185,9 +201,14 @@ class BertSelfAttentionWithRelation(nn.Module):
         context_layer = torch.matmul(attention_probs, value_layer)
 
         if self.relation_encoding_method == 'key_value':
-            relation_embedding_v = self.relation_v(evidence_type)
-            context_layer += torch.einsum("bhlr,brld->bhld", attention_probs, relation_embedding_v)
-
+            if self.share_relation_across_head:
+                context_layer += torch.einsum("bhlr,brld->bhld", attention_probs, relation_embedding_v)
+            else:
+                relation_embedding_v = relation_embedding_v.view(relation_embedding_k.shape[0],
+                                                                 relation_embedding_k.shape[1],
+                                                                 relation_embedding_k.shape[2],
+                                                                 self.num_attention_heads, -1).permute(0, 3, 1, 2, 4)
+                context_layer += torch.einsum("bhlr,bhrld->bhld", attention_probs, relation_embedding_v)
 
         context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
         new_context_layer_shape = context_layer.size()[:-2] + (self.all_head_size,)
@@ -228,7 +249,8 @@ class BertAttention(nn.Module):
     def forward(
         self,
         hidden_states,
-        evidence_type,
+        relation_embedding_k,
+        relation_embedding_v=None,
         attention_mask=None,
         head_mask=None,
         encoder_hidden_states=None,
@@ -238,7 +260,8 @@ class BertAttention(nn.Module):
     ):
         self_outputs = self.self(
             hidden_states,
-            evidence_type,
+            relation_embedding_k,
+            relation_embedding_v,
             attention_mask,
             head_mask,
             encoder_hidden_states,
@@ -269,7 +292,8 @@ class BertLayerWithRelation(nn.Module):
     def forward(
         self,
         hidden_states,
-        evidence_type,
+        relation_embedding_k,
+        relation_embedding_v=None,
         attention_mask=None,
         head_mask=None,
         encoder_hidden_states=None,
@@ -281,7 +305,8 @@ class BertLayerWithRelation(nn.Module):
         self_attn_past_key_value = past_key_value[:2] if past_key_value is not None else None
         self_attention_outputs = self.attention(
             hidden_states,
-            evidence_type,
+            relation_embedding_k,
+            relation_embedding_v,
             attention_mask,
             head_mask,
             output_attentions=output_attentions,

@@ -96,15 +96,18 @@ def hyperparam_path_for_eve_mrc(model_args, data_args, training_args):
             exp_name += f'__dynamic_evi_len_{data_args.dynamic_evidence_len}'
         else:
             exp_name += f'__veri_evi_len_{data_args.verifier_evidence_len}'
-        exp_name += f'__eve_layer_{model_args.num_eve_layers}'
-        exp_name += f'__eve_head_num_{model_args.eve_head_num}'
-        exp_name += f'__eve_att_head_{model_args.eve_att_head}'
-        exp_name += f'__pool_type_{model_args.output_pooling_type}'
         if training_args.large_learning_rate > 0:
             exp_name += f'__large_lr_{training_args.large_learning_rate}'
+        exp_name += f'__eve_layer_{model_args.num_eve_layers}'
+        exp_name += f'__pool_type_{model_args.output_pooling_type}'
         if model_args.eve_with_relation_embedding:
             exp_name += f'__relation_type_num_{model_args.relation_type_num}'
             exp_name += f'__relation_method_{model_args.relation_encoding_method}'
+            exp_name += f'__relation_head_share_{model_args.share_relation_across_head}'
+            exp_name += f'__relation_layer_share_{model_args.share_relation_across_layer}'
+        else:
+            exp_name += f'__eve_head_num_{model_args.eve_head_num}'
+            exp_name += f'__eve_att_head_{model_args.eve_att_head}'
 
     exp_path = os.path.join(training_args.output_dir, dataset_name, model_type, exp_name, now_time)
 
