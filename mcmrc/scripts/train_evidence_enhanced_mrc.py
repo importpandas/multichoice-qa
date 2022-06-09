@@ -117,6 +117,12 @@ class ModelArguments(BasicModelArguments):
             "help": "method to encoding relation: key, key_query, key_value"
         },
     )
+    attention_score_scaling: bool = field(
+        default=True,
+        metadata={
+            "help": "Whether to apply score scaling to attention scores"
+        },
+    )
     share_relation_across_head: bool = field(
         default=True,
         metadata={
@@ -328,6 +334,7 @@ def main():
     answer_verifier_config.relation_encoding_method = model_args.relation_encoding_method
     answer_verifier_config.share_relation_across_head = model_args.share_relation_across_head
     answer_verifier_config.share_relation_across_layer = model_args.share_relation_across_layer
+    answer_verifier_config.attention_score_scaling = model_args.attention_score_scaling
 
     if data_args.dataset == 'dream' and type(answer_verifier_config).__name__ == "AlbertConfig":
         answer_verifier_config.pooling_type = "sequence_mean" if not model_args.output_pooling_type \

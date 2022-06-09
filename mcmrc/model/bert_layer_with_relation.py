@@ -30,7 +30,9 @@ class RelationEmbedding(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.attention_head_size = int(config.hidden_size / config.num_attention_heads)
-        if config.share_relation_across_head:
+        if config.relation_encoding_method == "scalar":
+            self.relation_embedding = nn.Embedding(config.relation_type_num, config.num_attention_heads)
+        elif config.share_relation_across_head:
             self.relation_embedding = nn.Embedding(config.relation_type_num, self.attention_head_size)
         else:
             self.relation_embedding = nn.Embedding(config.relation_type_num, config.hidden_size)
@@ -92,13 +94,12 @@ class BertSelfAttentionWithRelation(nn.Module):
         self.relation_encoding_method = config.relation_encoding_method
         self.share_relation_across_head = config.share_relation_across_head
 
+        self.attention_score_scaling = config.attention_score_scaling
+
         self.dropout = nn.Dropout(config.attention_probs_dropout_prob)
         self.position_embedding_type = position_embedding_type or getattr(
             config, "position_embedding_type", "absolute"
         )
-        if self.position_embedding_type == "relative_key" or self.position_embedding_type == "relative_key_query":
-            self.max_position_embeddings = config.max_position_embeddings
-            self.distance_embedding = nn.Embedding(2 * config.max_position_embeddings - 1, self.attention_head_size)
 
         self.is_decoder = config.is_decoder
 
@@ -159,7 +160,13 @@ class BertSelfAttentionWithRelation(nn.Module):
         # Take the dot product between "query" and "key" to get the raw attention scores.
         attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))
 
-        if self.relation_encoding_method in ["key", "key_value"]:
+        if self.relation_encoding_method == 'scalar':
+            relation_scores = relation_embedding_k.permute(0, 3, 1, 2)
+            if attention_mask is not None:
+                relation_scores = relation_scores + attention_mask
+            attention_scores += relation_scores
+
+        elif self.relation_encoding_method in ["key", "key_value"]:
             if self.share_relation_across_head:
                 relation_scores = torch.einsum("bhld,blrd->bhlr", query_layer, relation_embedding_k)
             else:
@@ -182,7 +189,9 @@ class BertSelfAttentionWithRelation(nn.Module):
                 relation_scores_key = torch.einsum("bhld,bhlrd->bhlr", key_layer, relation_embedding_k)
             attention_scores = attention_scores + relation_scores_query + relation_scores_key
 
-        attention_scores = attention_scores / math.sqrt(self.attention_head_size)
+        if self.attention_score_scaling:
+            attention_scores = attention_scores / math.sqrt(self.attention_head_size)
+
         if attention_mask is not None:
             # Apply the attention mask is (precomputed for all layers in BertModel forward() function)
             attention_scores = attention_scores + attention_mask

@@ -100,6 +100,8 @@ def hyperparam_path_for_eve_mrc(model_args, data_args, training_args):
             exp_name += f'__large_lr_{training_args.large_learning_rate}'
         exp_name += f'__eve_layer_{model_args.num_eve_layers}'
         exp_name += f'__pool_type_{model_args.output_pooling_type}'
+        if not model_args.attention_score_scaling:
+            exp_name += f'__attention_scaling_{model_args.attention_score_scaling}'
         if model_args.eve_with_relation_embedding:
             exp_name += f'__relation_type_num_{model_args.relation_type_num}'
             exp_name += f'__relation_method_{model_args.relation_encoding_method}'
