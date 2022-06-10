@@ -20,12 +20,13 @@ from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 from torch.utils.data.distributed import DistributedSampler
 
 from .common import Timer
-from .trainer_utils import compute_mc_metrics, compute_verifier_metrics
+from .trainer_utils import compute_mc_metrics, compute_verifier_metrics, nested_detach_cpu
 from .checkpoint import save_checkpoint
 
 from ..data_utils.collator import DataCollatorForMultipleChoice, DataCollatorForGeneratingEvidenceUsingSelector
 
 from utils.param import iter_parameters_of_optimizer
+import pickle
 
 from packaging import version
 from transformers.trainer_pt_utils import (
@@ -146,7 +147,10 @@ class Trainer:
 
         self.weight_decay = args.weight_decay
         self.learning_rate = args.learning_rate
-        self.large_learning_rate = args.large_learning_rate
+        if hasattr(args, 'large_learning_rate'):
+            self.large_learning_rate = args.large_learning_rate
+        else:
+            self.large_learning_rate = 0
         self.layerwise_lr_decay = 1
         self.adam_epsilon = args.adam_epsilon
         self.max_grad_norm = args.max_grad_norm
@@ -224,13 +228,14 @@ class Trainer:
 
         return (loss, outputs) if return_outputs else loss
 
-    def _prepare_inputs(self, inputs):
+    def _prepare_inputs(self, inputs, output_attentions=False):
         """
         Prepare :obj:`inputs` before feeding them to the model, converting them to tensors if they are not already and
         handling potential state.
         """
         if 'example_ids' in inputs.keys():
             _ = inputs.pop('example_ids')
+        inputs['output_attentions'] = output_attentions
         for k, v in inputs.items():
             if isinstance(v, torch.Tensor):
                 inputs[k] = v.to(self.args.device)
@@ -243,6 +248,7 @@ class Trainer:
             inputs,
             prediction_loss_only,
             ignore_keys=None,
+            output_attentions=False
     ):
         """
         Perform an evaluation step on :obj:`model` using obj:`inputs`.
@@ -268,7 +274,7 @@ class Trainer:
             labels (each being optional).
         """
         has_labels = all(inputs.get(k) is not None for k in self.label_names)
-        inputs = self._prepare_inputs(inputs)
+        inputs = self._prepare_inputs(inputs, output_attentions=output_attentions)
         if ignore_keys is None:
             if hasattr(self.model, "config"):
                 ignore_keys = getattr(self.model.config, "keys_to_ignore_at_inference", [])
@@ -303,11 +309,19 @@ class Trainer:
         if prediction_loss_only:
             return (loss, None, None)
 
-        logits = nested_detach(logits)
-        if len(logits) == 1:
+        if output_attentions:
+            logits, attentions = nested_detach_cpu(logits)
+        else:
+            logits = nested_detach(logits)
+
+        if len(logits) == 1 and isinstance(logits, (list, tuple)):
             logits = logits[0]
 
-        return (loss, logits, labels)
+        if output_attentions:
+            return (loss, logits, attentions, labels)
+        else:
+            return (loss, logits, labels)
+
 
     def training_step(self, model, inputs):
         """
@@ -495,7 +509,8 @@ class Trainer:
 
         return TrainOutput(global_step, tr_loss / global_step, metrics)
 
-    def evaluate(self, dataset, data_collator=None, description="", metric_key_prefix="eval", compute_metrics=None):
+    def evaluate(self, dataset, data_collator=None, description="", metric_key_prefix="eval", compute_metrics=None,
+                 output_attentions=False):
         # predicition with single device
 
         eval_sampler = SequentialSampler(dataset)
@@ -538,7 +553,15 @@ class Trainer:
             if 'example_ids' in inputs.keys():
                 example_ids = inputs.pop('example_ids')
                 all_example_ids += example_ids
-            loss, logits, labels = self.prediction_step(model, inputs, prediction_loss_only)
+            if output_attentions:
+                loss, logits, attentions, labels = self.prediction_step(model, inputs, prediction_loss_only,
+                                                            output_attentions=output_attentions)
+                output_attention_file = os.path.join(self.checkpoint_dir, f"{description}_attention.pickle")
+                with open(output_attention_file, "ab") as f:
+                    pickle.dump((example_ids, nested_numpify(attentions)), f)
+            else:
+                loss, logits, labels = self.prediction_step(model, inputs, prediction_loss_only,
+                                                            output_attentions=output_attentions)
 
             if loss is not None:
                 losses = loss.repeat(eval_dataloader.batch_size)

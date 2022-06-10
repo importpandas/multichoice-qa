@@ -28,6 +28,8 @@ from functools import partial
 from pathlib import Path
 from objprint import add_objprint
 from dataclasses import dataclass, field
+import pickle
+import torch
 
 import transformers
 from transformers import (
@@ -47,6 +49,7 @@ from ..data_utils.collator import DataCollatorForMultipleChoice
 from ..cli.argument import BasicModelArguments, BasicDataTrainingArguments
 from ..trainer.trainer import Trainer, compute_mc_metrics
 from ..model.auto_model import AutoModelForMultipleChoice
+from ..data_utils.processors import load_exp_race_data
 
 logger = logging.getLogger(__name__)
 
@@ -75,8 +78,15 @@ class DataTrainingArguments(BasicDataTrainingArguments):
         default=0,
         metadata={"help": "split fold num of training dataset"},
     )
+    exp_race_file: str = field(
+        default="",
+        metadata={"help": "An optional input evaluation data file to evaluate model on exp_race_file"},
+    )
     output_prediction_file:  bool = field(
         default=True, metadata={"help": "whether to output model prediction"}
+    )
+    output_attentions:  bool = field(
+        default=False, metadata={"help": "whether to output model attentions"}
     )
     evidence_logits_path: str = field(
         default="",
@@ -151,6 +161,16 @@ def main():
     else:
         datasets = load_dataset(data_args.dataload_script, data_args.dataload_split,
                                 data_dir=data_args.data_dir)
+
+    if data_args.exp_race_file != "":
+        cached_exp_features_file = os.path.join("cached_features", "cached_exp_features")
+        if os.path.exists(cached_exp_features_file):
+            datasets['exp'] = torch.load(cached_exp_features_file)
+        else:
+            datasets['exp'] = Dataset.from_dict(load_exp_race_data(data_args.exp_race_file))
+            if training_args.local_rank in [-1, 0]:
+                logger.info("Saving exp features into cached file %s", cached_exp_features_file)
+                torch.save(datasets['exp'], cached_exp_features_file)
 
     if data_args.shuffle_train_dataset:
         datasets['train'] = datasets['train'].shuffle(seed=training_args.seed)
@@ -264,7 +284,7 @@ def main():
 
         for split in [k for k in datasets.keys() if k != "train"]:
             logger.info(f"*** Evaluate {split} set ***")
-            results = trainer.evaluate(tokenized_datasets[split])
+            results = trainer.evaluate(tokenized_datasets[split], output_attentions=data_args.output_attentions, description=split)
             if training_args.load_best_model_at_end:
                 final_model = trainer.model
                 trainer.model = best_model

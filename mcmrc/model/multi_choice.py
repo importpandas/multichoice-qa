@@ -139,11 +139,23 @@ class AlbertForMultipleChoice(AlbertPreTrainedModel):
             output = (reshaped_logits,) + outputs[2:]
             return ((loss,) + output) if loss is not None else output
 
+        if output_attentions:
+            #attentions = []
+            # for att in outputs.attentions:
+            #     attentions.append(att.view(-1, num_choices, att.shape[-3], att.shape[-2], att.shape[-1]))
+            attentions = outputs.attentions[-1].view(-1, num_choices,
+                                                     outputs.attentions[-1].shape[-3],
+                                                     outputs.attentions[-1].shape[-2],
+                                                     outputs.attentions[-1].shape[-1])
+            attentions = torch.sum(attentions, dim=2)
+        else:
+            attentions = None
+
         return MultipleChoiceModelOutput(
             loss=loss,
             logits=reshaped_logits,
             hidden_states=outputs.hidden_states,
-            attentions=outputs.attentions,
+            attentions=attentions,
         )
 
 
@@ -253,11 +265,22 @@ class BertForMultipleChoice(BertPreTrainedModel):
             output = (reshaped_logits,) + outputs[2:]
             return ((loss,) + output) if loss is not None else output
 
+        if output_attentions:
+            #attentions = []
+            # for att in outputs.attentions:
+            #     attentions.append(att.view(-1, num_choices, att.shape[-3], att.shape[-2], att.shape[-1]))
+            attentions = outputs.attentions[-1].view(-1, num_choices,
+                                                     outputs.attentions[-1].shape[-3],
+                                                     outputs.attentions[-1].shape[-2],
+                                                     outputs.attentions[-1].shape[-1])
+            attentions = torch.sum(attentions, dim=2)
+        else:
+            attentions = None
         return MultipleChoiceModelOutput(
             loss=loss,
             logits=reshaped_logits,
             hidden_states=outputs.hidden_states,
-            attentions=outputs.attentions,
+            attentions=attentions,
         )
 
 

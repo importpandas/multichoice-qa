@@ -17,6 +17,12 @@ def _grad_sync(optimizer):
             torch.distributed.all_reduce(p.grad)
 
 
+def nested_detach_cpu(tensors):
+    "Detach `tensors` (even if it's a nested list/tuple of tensors)."
+    if isinstance(tensors, (list, tuple)):
+        return type(tensors)(nested_detach_cpu(t) for t in tensors)
+    return tensors.detach().cpu()
+
 class PredictionOutput(NamedTuple):
     predictions: Union[np.ndarray, Tuple[np.ndarray]]
     label_ids: Optional[np.ndarray]
