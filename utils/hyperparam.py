@@ -53,7 +53,16 @@ def hyperparam_path_for_two_stage_evidence_selector(model_args, data_args, train
         # if not training_args.train_evidence_selector:
         #     exp_name += f'__evi_sam_num_{data_args.evidence_sampling_num}'
         exp_name += f'__veri_epochs_{training_args.num_train_verifier_epochs}'
-        exp_name += f'__veri_evi_len_{data_args.verifier_evidence_len}'
+        if data_args.dynamic_evidence_len:
+            exp_name += f'__dynamic_evi_len_{data_args.dynamic_evidence_len}'
+        else:
+            if data_args.positive_evidence_len >= 0 or data_args.negative_evidence_len >= 0:
+                exp_name += f'__pos_evi_len_{data_args.positive_evidence_len}'
+                exp_name += f'__neg_evi_len_{data_args.negative_evidence_len}'
+            else:
+                exp_name += f'__veri_evi_len_{data_args.verifier_evidence_len}'
+        if data_args.polarity_hint:
+            exp_name += f'__polarity_hint_{data_args.polarity_hint}'
         if not data_args.train_verifier_with_option:
             exp_name += f'__train_ise_with_opt_{data_args.train_verifier_with_option}'
         if data_args.train_verifier_with_non_overlapping_evidence:

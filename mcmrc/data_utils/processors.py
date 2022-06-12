@@ -1264,7 +1264,9 @@ def prepare_features_for_bidirectional_answer_verifier(
         examples,
         train_verifier_with_option=True,
         evidence_logits=None,
-        evidence_len=1,
+        positive_evidence_len=1,
+        add_polarity_hint=False,
+        negative_evidence_len=1,
         tokenizer=None,
         data_args=None):
     contexts = examples['article']
@@ -1277,64 +1279,97 @@ def prepare_features_for_bidirectional_answer_verifier(
     labels = []
     qa_list = []
     processed_contexts = []
+    evidence = []
 
     num_choices = len(options[0])
-    evidence_with_logits = []
 
     for i in range(len(answers)):
-        full_context = contexts[i]
-        eid = example_ids[i]
+        processed_context = contexts[i]
 
         label = ord(answers[i]) - ord("A")
         labels.append(label)
 
         question = process_text(questions[i])
         context_list = []
-
-        if train_verifier_with_option:
-            qa_pairs = []
-            for j in range(num_choices):
-                option = process_text(options[i][j])
-
-                qa_cat = concat_question_option(question, option, dataset=data_args.dataset)
-                qa_cat = " ".join(whitespace_tokenize(qa_cat)[- data_args.max_qa_length:])
-                qa_pairs.append(qa_cat)
-        else:
-            qa_pairs = [question] * num_choices
+        qa_pairs = []
 
         per_example_sent_starts = sent_starts[i]
-        per_example_sent_starts.append(len(full_context))
+        per_example_sent_ends = [char_idx - 1 for char_idx in per_example_sent_starts[1:]] + [
+            len(processed_context) - 1]
 
-        per_example_evidence_with_logits = [[] for _ in range(num_choices)]
+        per_example_evidence = []
         sent_num = len(evidence_logits[example_ids[i] + '_' + str(0)])
         for j in range(num_choices):
+            option = process_text(options[i][j])
+            qa_cat = concat_question_option(question, option, dataset=data_args.dataset)
+            qa_cat = " ".join(whitespace_tokenize(qa_cat)[- data_args.max_qa_length:])
+            qa_pairs.append(qa_cat)
+
             optionwise_example_id = example_ids[i] + '_' + str(j)
 
             per_example_evidence_logits = evidence_logits[optionwise_example_id]
 
-            evidence_len = evidence_len if evidence_len <= sent_num else sent_num
-            sorted_sents_by_positive_score = sorted(per_example_evidence_logits.items(), key=lambda x: x[1][1],
-                                                    reverse=True)
-            sorted_sents_by_negative_score = sorted(per_example_evidence_logits.items(), key=lambda x: x[1][2],
-                                                    reverse=True)
+            sents_with_evidential_score = {f'{sent_idx}_{polarity}': score
+                                           for sent_idx, sent_logit in per_example_evidence_logits.items()
+                                           for polarity, score in enumerate(sent_logit)}
+            sorted_sents_by_evidential_score = sorted(sents_with_evidential_score.items(), key=lambda x: x[1],
+                                                      reverse=True)
+
+            positive_evidence, negative_evidence = '', ''
+            positive_evidence_len = positive_evidence_len if positive_evidence_len <= sent_num else sent_num
+            negative_evidence_len = negative_evidence_len if negative_evidence_len <= sent_num else sent_num
+
+            # 1 means positive evidence, 2 means negative evidence
+            evidence_len = {1: positive_evidence_len, 2: negative_evidence_len}
+            evidence_idxs = {1: [], 2: []}
+            already_evidence_set = []
+
+            for evidence_idx_with_polarity, evidence_score in sorted_sents_by_evidential_score:
+                evidence_idx, polarity = evidence_idx_with_polarity.split("_")
+                evidence_idx = int(evidence_idx)
+                polarity = int(polarity)
+                if evidence_idx in already_evidence_set:
+                    continue
+                if polarity == 0:
+                    if data_args.dynamic_evidence_len:
+                        already_evidence_set.append(evidence_idx)
+                    continue
+                if not data_args.dynamic_evidence_len and len(evidence_idxs[polarity]) >= evidence_len[polarity]:
+                    continue
+                if not data_args.dynamic_evidence_len and  \
+                        len(evidence_idxs[1]) >= evidence_len[1] and len(evidence_idxs[2]) >= evidence_len[2]:
+                    break
+                already_evidence_set.append(evidence_idx)
+                sent_start = per_example_sent_starts[evidence_idx]
+                sent_end = per_example_sent_ends[evidence_idx]
+                if polarity == 1 and positive_evidence == '':
+                    positive_evidence = processed_context[sent_start: sent_end + 1]
+                elif polarity == 2 and negative_evidence == '':
+                    negative_evidence = processed_context[sent_start: sent_end + 1]
+
+                evidence_idxs[polarity].append(evidence_idx)
+
             evidence_concat = ""
-            for positive_evidence, evidence_score in sorted_sents_by_positive_score[: evidence_len]:
-                sent_start = per_example_sent_starts[positive_evidence]
-                sent_end = per_example_sent_starts[positive_evidence + 1]
-                evidence_concat += full_context[sent_start: sent_end]
-                per_example_evidence_with_logits[j].append([per_example_evidence_logits[positive_evidence],
-                                                            full_context[sent_start: sent_end]])
-            evidence_concat += " [SEP] "
+            if add_polarity_hint and len(evidence_idxs[1]) > 0:
+                evidence_concat += "Below sentences are positive evidence: "
+            for positive_evidence_idx in sorted(evidence_idxs[1]):
+                sent_start = per_example_sent_starts[positive_evidence_idx]
+                sent_end = per_example_sent_ends[positive_evidence_idx]
+                evidence_concat += processed_context[sent_start: sent_end + 1]
 
-            for negative_evidence, evidence_score in sorted_sents_by_negative_score[: evidence_len]:
-                sent_start = per_example_sent_starts[negative_evidence]
-                sent_end = per_example_sent_starts[negative_evidence + 1]
-                evidence_concat += full_context[sent_start: sent_end]
-                per_example_evidence_with_logits[j].append([per_example_evidence_logits[negative_evidence],
-                                                            full_context[sent_start: sent_end]])
+            if add_polarity_hint and len(evidence_idxs[2]) > 0 and len(evidence_idxs[1]) > 0:
+                evidence_concat += " [SEP] Below sentences are negative evidence: "
+            elif len(evidence_idxs[2]) > 0 and len(evidence_idxs[1]) > 0:
+                evidence_concat += " [SEP] "
+            for negative_evidence_idx in sorted(evidence_idxs[2]):
+                sent_start = per_example_sent_starts[negative_evidence_idx]
+                sent_end = per_example_sent_ends[negative_evidence_idx]
+                evidence_concat += processed_context[sent_start: sent_end + 1]
 
+            per_example_evidence.append([positive_evidence, negative_evidence])
             context_list.append(evidence_concat)
-        evidence_with_logits.append(per_example_evidence_with_logits)
+
+        evidence.append(per_example_evidence)
         processed_contexts.append(context_list)
         qa_list.append(qa_pairs)
 
@@ -1351,8 +1386,7 @@ def prepare_features_for_bidirectional_answer_verifier(
     tokenized_examples = {k: [v[i: i + num_choices] for i in range(0, len(v), num_choices)] for k, v in tokenized_examples.items()}
     tokenized_examples['label'] = labels
     tokenized_examples['example_ids'] = example_ids
-    tokenized_examples['evidence_sentence'] = [[[i[1] for i in option_evi] for option_evi in evi] for evi in evidence_with_logits]
-    tokenized_examples['evidence_logit'] = [[[i[0] for i in option_evi] for option_evi in evi] for evi in evidence_with_logits]
+    tokenized_examples['evidence'] = evidence
 
     # Un-flatten
     return tokenized_examples

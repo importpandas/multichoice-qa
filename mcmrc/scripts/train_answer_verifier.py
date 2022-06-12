@@ -184,6 +184,30 @@ class DataTrainingArguments(BasicDataTrainingArguments):
             "help": "Whether to train answer verifier with non overlapping evidence"
         },
     )
+    dynamic_evidence_len: bool = field(
+        default=False,
+        metadata={
+            "help": "Whether to select evidence num according to prediction of evidence selector"
+        },
+    )
+    polarity_hint: bool = field(
+        default=False,
+        metadata={
+            "help": "Whether to add polarity hint"
+        },
+    )
+    positive_evidence_len: Optional[int] = field(
+        default=-1,
+        metadata={
+            "help": "number of  positive evidence sentences for each choice during evidence competition "
+        },
+    )
+    negative_evidence_len: Optional[int] = field(
+        default=-1,
+        metadata={
+            "help": "number of negative ,evidence sentences for each choice during evidence competition "
+        },
+    )
     exp_race_file: Optional[str] = field(
         default=None,
         metadata={"help": "An optional input evaluation data file to evaluate model on exp_race_file"},
@@ -254,8 +278,6 @@ def main():
     training_args.output_dir = checkpoint_dir
     ckpt_dir = Path(checkpoint_dir)
     setup_root_logger(ckpt_dir, training_args.local_rank, debug=False, postfix=postfix)
-
-
 
     # Log on each process the small summary:
     logger.warning(
@@ -412,9 +434,15 @@ def main():
             jump_wrong_examples=data_args.selector_jump_wrong_examples,
             polarity_by_answer=data_args.evidence_polarity_by_answer_correctness)
 
+        positive_evidence_len = data_args.positive_evidence_len if data_args.positive_evidence_len >=0 \
+            else data_args.verifier_evidence_len
+        negative_evidence_len = data_args.negative_evidence_len if data_args.negative_evidence_len >=0 \
+            else data_args.verifier_evidence_len
         pprepare_features_for_answer_verifier = partial(
             prepare_features_for_bidirectional_answer_verifier,
-            evidence_len=data_args.verifier_evidence_len,
+            add_polarity_hint=data_args.polarity_hint,
+            positive_evidence_len=positive_evidence_len,
+            negative_evidence_len=negative_evidence_len,
             train_verifier_with_option=data_args.train_verifier_with_option,
             tokenizer=tokenizer,
             data_args=data_args)
@@ -593,13 +621,9 @@ def main():
                 load_from_cache_file=not data_args.overwrite_cache,
             )
 
-            evidence_sentences_split = {eid: [[(logit, sent) for sent, logit in zip(option_sents, option_logits)]
-                                        for option_sents, option_logits in zip(evidence_sent, evidence_logit)]
-                                        for eid, evidence_sent, evidence_logit in
-                                  zip(verifier_dataset['example_ids'],
-                                      verifier_dataset['evidence_sentence'],
-                                      verifier_dataset['evidence_logit'])}
-            train_answer_verifier_datasets[split] = verifier_dataset.remove_columns(["evidence_sentence", "evidence_logit"])
+            evidence_sentences_split = {eid: evidence_set for eid, evidence_set in
+                                        zip(verifier_dataset['example_ids'], verifier_dataset['evidence'])}
+            train_answer_verifier_datasets[split] = verifier_dataset.remove_columns(["evidence"])
             evidence_sentences[split] = evidence_sentences_split
 
         output_evidence_file = os.path.join(training_args.output_dir, f"all_evidence.json")
@@ -659,7 +683,7 @@ def main():
                     prediction_file = {}
                     for eid, probs in merge_prediction.items():
                         pred_option = np.argmax(probs)
-                        pred_evidence = sorted(evidence_sentences['exp'][eid][pred_option], key=lambda x: x[0], reverse=True)[0][1]
+                        pred_evidence = evidence_sentences['exp'][eid][pred_option][0]
                         prediction_file[eid] = {"answer": chr(pred_option + ord("A")), "evidence": pred_evidence}
                     all_f1, ans_f1, evi_f1, total_count, skip_count = evaluate_multi_choice(ground_truth_file,
                                                                                             prediction_file)
