@@ -191,7 +191,7 @@ class DataTrainingArguments(BasicDataTrainingArguments):
         },
     )
     polarity_hint: bool = field(
-        default=False,
+        default=True,
         metadata={
             "help": "Whether to add polarity hint"
         },

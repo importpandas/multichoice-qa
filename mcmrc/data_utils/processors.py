@@ -1351,14 +1351,14 @@ def prepare_features_for_bidirectional_answer_verifier(
 
             evidence_concat = ""
             if add_polarity_hint and len(evidence_idxs[1]) > 0:
-                evidence_concat += "Below sentences are positive evidence: "
+                evidence_concat += "Positive Evidence: "
             for positive_evidence_idx in sorted(evidence_idxs[1]):
                 sent_start = per_example_sent_starts[positive_evidence_idx]
                 sent_end = per_example_sent_ends[positive_evidence_idx]
                 evidence_concat += processed_context[sent_start: sent_end + 1]
 
             if add_polarity_hint and len(evidence_idxs[2]) > 0 and len(evidence_idxs[1]) > 0:
-                evidence_concat += " [SEP] Below sentences are negative evidence: "
+                evidence_concat += " [SEP] Negative Evidence: "
             elif len(evidence_idxs[2]) > 0 and len(evidence_idxs[1]) > 0:
                 evidence_concat += " [SEP] "
             for negative_evidence_idx in sorted(evidence_idxs[2]):
