@@ -140,8 +140,8 @@ def main():
     if not 0 <= data_args.holdout_set < data_args.n_fold:
         raise ValueError("Test fold must be in [0, n_fold)")
 
-    if data_args.dataset not in ['race', 'dream']:
-        raise ValueError("Dataset should be race or dream.")
+    if data_args.dataset not in ['race', 'dream', 'c3']:
+        raise ValueError("Dataset should be race、 dream or c3")
     else:
         from mcmrc.data_utils.processors import prepare_features
 

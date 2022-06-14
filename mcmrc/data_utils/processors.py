@@ -196,7 +196,10 @@ def prepare_features(examples, tokenizer=None, data_args=None):
         question = process_text(questions[i])
         qa_pairs = []
         for j in range(num_choices):
-            option = process_text(options[i][j])
+            if j > len(options[i]) - 1:
+                option = ""
+            else:
+                option = process_text(options[i][j])
 
             qa_cat = concat_question_option(question, option, dataset=data_args.dataset)
             qa_cat = " ".join(whitespace_tokenize(qa_cat)[- data_args.max_qa_length:])
