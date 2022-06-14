@@ -187,6 +187,8 @@ def prepare_features(examples, tokenizer=None, data_args=None):
     processed_contexts = []
 
     num_choices = len(options[0])
+    if data_args.dataset == 'c3':
+        num_choices = 4
 
     for i in range(len(answers)):
         label = ord(answers[i]) - ord("A")

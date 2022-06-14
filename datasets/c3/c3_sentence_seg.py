@@ -74,6 +74,12 @@ class C3(datasets.GeneratorBasedBuilder):
             version=datasets.Version("1.0.0"),
             type_="dialog",
         ),
+        C3Config(
+            name="all",
+            description="all questions",
+            version=datasets.Version("1.0.0"),
+            type_="all",
+        ),
     ]
 
     def _info(self):
@@ -104,15 +110,21 @@ class C3(datasets.GeneratorBasedBuilder):
     def _split_generators(self, dl_manager):
         # m or d
         T = self.config.type_[0]
-        files = [_URL + f"c3-{T}-{split}.json" for split in ["train", "test", "dev"]]
-        dl_dir = dl_manager.download_and_extract(files)
+        if T == "a":
+            train_files = [_URL + f"c3-{t}-train.json" for t in ['m', 'd']]
+            T = 'm'
+        else:
+            train_files = _URL + f"c3-{T}-train.json"
+        eval_files = [_URL + f"c3-{T}-{split}.json" for split in ["test", "dev"]]
+        train_dl_dir = dl_manager.download_and_extract(train_files)
+        eval_dl_dir = dl_manager.download_and_extract(eval_files)
 
         return [
             datasets.SplitGenerator(
                 name=datasets.Split.TRAIN,
                 # These kwargs will be passed to _generate_examples
                 gen_kwargs={
-                    "filename": dl_dir[0],
+                    "filename": train_dl_dir,
                     "split": "train",
                 },
             ),
@@ -120,7 +132,7 @@ class C3(datasets.GeneratorBasedBuilder):
                 name=datasets.Split.TEST,
                 # These kwargs will be passed to _generate_examples
                 gen_kwargs={
-                    "filename": dl_dir[1],
+                    "filename": eval_dl_dir[0],
                     "split": "test",
                 },
             ),
@@ -128,7 +140,7 @@ class C3(datasets.GeneratorBasedBuilder):
                 name=datasets.Split.VALIDATION,
                 # These kwargs will be passed to _generate_examples
                 gen_kwargs={
-                    "filename": dl_dir[2],
+                    "filename": eval_dl_dir[1],
                     "split": "dev",
                 },
             ),
@@ -136,29 +148,34 @@ class C3(datasets.GeneratorBasedBuilder):
 
     def _generate_examples(self, filename, split):
         """Yields examples."""
-        with open(filename, "r", encoding="utf-8") as sf:
-            data = json.load(sf)
-            counter = 0
-            for id_, (documents, questions, document_id) in enumerate(data):
-                document = documents[0]
-                article = process_text(document)
-                doc = nlp(article)
-                article_sent_start = [sent.start_char for sent in doc.sents]
-                for i, sent_start in enumerate(article_sent_start):
-                    if i > 0 and sent_start - article_sent_start[i - 1] <= 3:
-                        article_sent_start.pop(i)
+        if not isinstance(filename, list):
+            filename_list = [filename]
+        else:
+            filename_list = filename
+        counter = 0
+        for filename in filename_list:
+            with open(filename, "r", encoding="utf-8") as sf:
+                data = json.load(sf)
+                for id_, (documents, questions, document_id) in enumerate(data):
+                    document = documents[0]
+                    article = process_text(document)
+                    doc = nlp(article)
+                    article_sent_start = [sent.start_char for sent in doc.sents]
+                    for i, sent_start in enumerate(article_sent_start):
+                        if i > 0 and sent_start - article_sent_start[i - 1] <= 3:
+                            article_sent_start.pop(i)
 
-                for i, que in enumerate(questions):
-                    options = que["choice"]
-                    answer = que["answer"]
-                    label = options.index(answer)
-                    label = chr(label + ord('A'))
-                    yield counter, {
-                        "example_id": document_id + '-' + str(i),
-                        "article": article,
-                        "article_sent_start": article_sent_start,
-                        "question": que["question"],
-                        "answer": label,
-                        "options": que["choice"],
-                    }
-                    counter += 1
+                    for i, que in enumerate(questions):
+                        options = que["choice"]
+                        answer = que["answer"]
+                        label = options.index(answer)
+                        label = chr(label + ord('A'))
+                        yield counter, {
+                            "example_id": document_id + '-' + str(i),
+                            "article": article,
+                            "article_sent_start": article_sent_start,
+                            "question": que["question"],
+                            "answer": label,
+                            "options": que["choice"],
+                        }
+                        counter += 1
