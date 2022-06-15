@@ -110,8 +110,8 @@ def main():
     # For CSV/JSON files, this script will use the column called 'text' or the first column if no column called
     # 'text' is found. You can easily tweak this behavior (see below).
 
-    if data_args.dataset not in ['race', 'dream']:
-        raise ValueError("Dataset should be race or dream.")
+    if data_args.dataset not in ['race', 'dream', 'c3']:
+        raise ValueError("Dataset should be race or dream or c3.")
     else:
         from mcmrc.data_utils.processors import prepare_features_for_generate_pseudo_label, \
             prepare_features_for_generate_pickout_pseudo_label
@@ -129,8 +129,8 @@ def main():
         datasets = load_dataset(data_args.dataload_script, data_args.dataload_split,
                                 data_dir=data_args.data_dir)
 
-    if data_args.dataset == 'race' and data_args.exp_race_file is not None:
-        datasets['exp'] = Dataset.from_dict(load_exp_race_data(data_args.exp_race_file))
+    if data_args.dataset in ['race', 'c3'] and data_args.exp_race_file is not None:
+        datasets['exp'] = Dataset.from_dict(load_exp_race_data(data_args.exp_race_file, use_chinese_nlp=data_args.dataset == 'c3'))
 
     # See more about loading any type of standard or custom dataset (from files, python dict, pandas DataFrame, etc) at
     # https://huggingface.co/docs/datasets/loading_datasets.html.

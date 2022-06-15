@@ -7,6 +7,7 @@ import json
 import spacy
 import re
 nlp = spacy.load("en_core_web_sm")
+chinese_nlp = spacy.load("zh_core_web_sm")
 
 
 def whitespace_tokenize(text):
@@ -34,7 +35,7 @@ def load_evidence_logits(evidence_logits_path):
     return evidence_logits
 
 
-def load_exp_race_data(exp_race_file, load_evidence=False):
+def load_exp_race_data(exp_race_file, load_evidence=False, use_chinese_nlp=False):
     print(exp_race_file)
     all_examples = dict.fromkeys(["example_id", "article", 'article_sent_start', "question", "answer", "options"], None)
     for k in all_examples.keys():
@@ -49,7 +50,10 @@ def load_exp_race_data(exp_race_file, load_evidence=False):
             answers = data["answers"]
             options = data["options"]
             article = process_text(data["article"])
-            doc = nlp(article)
+            if use_chinese_nlp:
+                doc = chinese_nlp(article)
+            else:
+                doc = nlp(article)
             article_sent_start = [sent.start_char for sent in doc.sents]
 
             if load_evidence:
@@ -367,6 +371,8 @@ def prepare_features_for_generate_pseudo_label(examples, tokenizer=None, data_ar
                 'label': []}
 
     num_choices = len(options[0])
+    if data_args.dataset == 'c3':
+        num_choices = 4
 
     for i in range(len(answers)):
 
@@ -382,7 +388,10 @@ def prepare_features_for_generate_pseudo_label(examples, tokenizer=None, data_ar
         all_text_b = []
         all_text_b_len = []
         for j in range(num_choices):
-            option = process_text(options[i][j])
+            if j > len(options[i]) - 1:
+                option = ""
+            else:
+                option = process_text(options[i][j])
 
             qa_cat = concat_question_option(question, option, dataset=data_args.dataset)
 
