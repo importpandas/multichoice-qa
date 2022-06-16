@@ -325,7 +325,7 @@ def main():
         if os.path.exists(cached_exp_features_file):
             datasets['exp'] = torch.load(cached_exp_features_file)
         else:
-            datasets['exp'] = Dataset.from_dict(load_exp_race_data(data_args.exp_race_file))
+            datasets['exp'] = Dataset.from_dict(load_exp_race_data(data_args.exp_race_file, use_chinese_nlp=data_args.dataset == 'c3'))
             if training_args.local_rank in [-1, 0]:
                 logger.info("Saving exp features into cached file %s", cached_exp_features_file)
                 torch.save(datasets['exp'], cached_exp_features_file)

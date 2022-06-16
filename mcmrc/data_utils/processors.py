@@ -882,16 +882,14 @@ def prepare_features_for_initializing_evidence_selector(examples,
 
     all_pseudo_label = load_pseudo_label(pseudo_label_path)
 
-    pseudo_logit = all_pseudo_label['logit']
-    acc = all_pseudo_label['acc']
-    options_prob_diff = all_pseudo_label['options_prob_diff']
+    pseudo_logit = all_pseudo_label['kv_div']
+    options_prob_diff = all_pseudo_label['options_logit_diff']
 
     qa_list = []
     labels = []
     processed_contexts = []
 
     num_choices = len(options[0])
-
 
     for i in range(len(answers)):
         full_context = contexts[i]
@@ -906,6 +904,8 @@ def prepare_features_for_initializing_evidence_selector(examples,
         send_idxs_sorted_by_importance = sorted(pseudo_logit[example_id].keys(),
                                                 key=lambda x: abs(pseudo_logit[example_id][x]), reverse=True)
 
+        if len(sent_starts[i]) != len(send_idxs_sorted_by_importance):
+            continue
         per_example_sent_starts = sent_starts[i]
         per_example_sent_starts.append(len(full_context))
 
