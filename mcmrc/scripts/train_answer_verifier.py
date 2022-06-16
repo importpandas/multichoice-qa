@@ -58,7 +58,6 @@ from mcmrc.data_utils.processors import (
     prepare_features_for_bidirectional_answer_verifier,
     prepare_features,
     load_exp_race_data,
-    load_adv_race_data
 )
 
 logger = logging.getLogger(__name__)
@@ -212,10 +211,6 @@ class DataTrainingArguments(BasicDataTrainingArguments):
         default=None,
         metadata={"help": "An optional input evaluation data file to evaluate model on exp_race_file"},
     )
-    adv_race_path: Optional[str] = field(
-        default=None,
-        metadata={"help": "An optional input evaluation data file path to evaluate model on AdvRACE"},
-    )
 
 
 @add_objprint(color=False)
@@ -242,9 +237,6 @@ class AllTrainingArguments(TrainingArguments):
     eval_on_exp_race: bool = field(
         default=False,
         metadata={"help": "Whether to evaluate answer verifier or evidence selector on Exp RACE dev set."})
-    eval_on_adv_race: bool = field(
-        default=False,
-        metadata={"help": "Whether to evaluate answer  on AdvRACE set."})
     num_train_selector_epochs: float = field(
         default=3.0,
         metadata={"help": "Total number of training epochs of evidence selector to perform."})
@@ -301,10 +293,10 @@ def main():
     # For CSV/JSON files, this script will use the column called 'text' or the first column if no column called
     # 'text' is found. You can easily tweak this behavior (see below).
 
-    if data_args.dataset not in ['race', 'dream']:
-        raise ValueError("Dataset should be race or dream.")
+    if data_args.dataset not in ['race', 'dream', 'c3']:
+        raise ValueError("Dataset should be race or dream or c3.")
 
-    if training_args.eval_on_exp_race and data_args.exp_race_file is None and data_args.dataset == 'race':
+    if training_args.eval_on_exp_race and data_args.exp_race_file is None and data_args.dataset in ['race', 'c3']:
         raise ValueError("exp_race_file must be specified")
 
     if training_args.eval_selector_with_reader and model_args.evidence_reader_path == "":
@@ -312,7 +304,6 @@ def main():
 
     if data_args.dataset == 'dream':
         training_args.eval_on_exp_race = False
-        training_args.eval_on_adv_race = False
 
     # In distributed training, the load_dataset function guarantee that only one local process can concurrently
     # download the dataset.
@@ -329,8 +320,8 @@ def main():
         datasets = load_dataset(data_args.dataload_script, data_args.dataload_split,
                                 data_dir=data_args.data_dir)
 
-    if training_args.eval_on_exp_race:
-        cached_exp_features_file = os.path.join("cached_features", "cached_exp_features")
+    if data_args.exp_race_file != "":
+        cached_exp_features_file = os.path.join("cached_features", f"{data_args.dataset}_cached_exp_features")
         if os.path.exists(cached_exp_features_file):
             datasets['exp'] = torch.load(cached_exp_features_file)
         else:
@@ -339,16 +330,6 @@ def main():
                 logger.info("Saving exp features into cached file %s", cached_exp_features_file)
                 torch.save(datasets['exp'], cached_exp_features_file)
 
-    if training_args.eval_on_adv_race:
-        for subset in os.listdir(data_args.adv_race_path):
-            cached_features_file = os.path.join("cached_features", f"cached_{subset}_features")
-            if os.path.exists(cached_features_file):
-                datasets[subset] = torch.load(cached_features_file)
-            else:
-                datasets[subset] = Dataset.from_dict(load_adv_race_data(os.path.join(data_args.adv_race_path, subset, "test_dis.json")))
-                if training_args.local_rank in [-1, 0]:
-                    logger.info(f"Saving {subset} features into cached file %s", cached_features_file)
-                    torch.save(datasets[subset], cached_features_file)
 
     logger.info("finished loading data")
 
@@ -663,9 +644,6 @@ def main():
         eval_sets = ["validation", "test"]
         if training_args.eval_on_exp_race and data_args.dataset == "race":
             eval_sets.append("exp")
-
-        if training_args.eval_on_adv_race and data_args.dataset == "race":
-            eval_sets += ['charSwap', 'AddSent', 'DE', 'DG', 'Orig']
 
         for split in eval_sets:
             logger.info(f"*** Evaluate Answer Verifier on {split} set ***")

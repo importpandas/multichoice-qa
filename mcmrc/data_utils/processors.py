@@ -191,8 +191,6 @@ def prepare_features(examples, tokenizer=None, data_args=None):
     processed_contexts = []
 
     num_choices = len(options[0])
-    if data_args.dataset == 'c3':
-        num_choices = 4
 
     for i in range(len(answers)):
         label = ord(answers[i]) - ord("A")
@@ -202,10 +200,7 @@ def prepare_features(examples, tokenizer=None, data_args=None):
         question = process_text(questions[i])
         qa_pairs = []
         for j in range(num_choices):
-            if j > len(options[i]) - 1:
-                option = ""
-            else:
-                option = process_text(options[i][j])
+            option = process_text(options[i][j])
 
             qa_cat = concat_question_option(question, option, dataset=data_args.dataset)
             qa_cat = " ".join(whitespace_tokenize(qa_cat)[- data_args.max_qa_length:])
@@ -371,8 +366,6 @@ def prepare_features_for_generate_pseudo_label(examples, tokenizer=None, data_ar
                 'label': []}
 
     num_choices = len(options[0])
-    if data_args.dataset == 'c3':
-        num_choices = 4
 
     for i in range(len(answers)):
 
@@ -388,10 +381,7 @@ def prepare_features_for_generate_pseudo_label(examples, tokenizer=None, data_ar
         all_text_b = []
         all_text_b_len = []
         for j in range(num_choices):
-            if j > len(options[i]) - 1:
-                option = ""
-            else:
-                option = process_text(options[i][j])
+            option = process_text(options[i][j])
 
             qa_cat = concat_question_option(question, option, dataset=data_args.dataset)
 
@@ -901,6 +891,7 @@ def prepare_features_for_initializing_evidence_selector(examples,
     processed_contexts = []
 
     num_choices = len(options[0])
+
 
     for i in range(len(answers)):
         full_context = contexts[i]

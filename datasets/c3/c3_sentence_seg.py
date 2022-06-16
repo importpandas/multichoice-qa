@@ -167,6 +167,7 @@ class C3(datasets.GeneratorBasedBuilder):
 
                     for i, que in enumerate(questions):
                         options = que["choice"]
+                        options += [''] * (4 - len(options))
                         answer = que["answer"]
                         label = options.index(answer)
                         label = chr(label + ord('A'))
