@@ -50,11 +50,14 @@ def load_exp_race_data(exp_race_file, load_evidence=False, use_chinese_nlp=False
             answers = data["answers"]
             options = data["options"]
             article = process_text(data["article"])
-            if use_chinese_nlp:
-                doc = chinese_nlp(article)
+            if 'article_sent_start' in data.keys():
+                article_sent_start = data['article_sent_start']
             else:
-                doc = nlp(article)
-            article_sent_start = [sent.start_char for sent in doc.sents]
+                if use_chinese_nlp:
+                    doc = chinese_nlp(article)
+                else:
+                    doc = nlp(article)
+                article_sent_start = [sent.start_char for sent in doc.sents]
 
             if load_evidence:
                 if 'evidences' in data:
@@ -951,7 +954,8 @@ def prepare_features_for_initializing_evidence_selector(examples,
             negative_sent_num = len(all_irre_sent_idxs)
 
         if negative_sent_num >= 1:
-            irre_options = random.sample(list(range(num_choices)), negative_sent_num)
+            option_num = len(list(filter(lambda x:x, options[i])))
+            irre_options = random.sample(list(range(option_num)), negative_sent_num)
             for idx, irre_sent_idx in enumerate(random.sample(all_irre_sent_idxs, negative_sent_num)):
                 sent_start = per_example_sent_starts[irre_sent_idx]
                 sent_end = per_example_sent_starts[irre_sent_idx + 1]
@@ -963,6 +967,9 @@ def prepare_features_for_initializing_evidence_selector(examples,
                 processed_contexts.append(irre_sent)
                 qa_list.append(qa_concat)
                 labels.append(0)
+
+    if len(processed_contexts) == 0:
+        return None
 
     tokenized_examples = tokenizer(
         processed_contexts,
@@ -1186,6 +1193,8 @@ def prepare_features_for_reading_optionwise_evidence(examples, evidence_logits=N
 
         question = process_text(questions[i])
         for j in range(num_choices):
+            if options[i][j] == "":
+                continue
             labels.append(j)
             example_id = example_ids[i] + '_' + str(j)
             all_example_ids.append(example_id)
@@ -1659,9 +1668,11 @@ def prepare_features_for_answer_verifier(
     sent_starts = examples['article_sent_start']
 
     labels = []
+    example_id_list = []
     qa_list = []
     processed_contexts = []
     competitive_scores = []
+    evidence_list = []
 
 
     num_choices = len(options[0])
@@ -1671,8 +1682,15 @@ def prepare_features_for_answer_verifier(
         full_context = contexts[i]
         eid = example_ids[i]
 
+        per_example_sent_starts = sent_starts[i]
+        per_example_sent_starts.append(len(full_context))
+
+        if len(per_example_sent_starts) != len(evidence_logits[eid + '_0']) + 1:
+            continue
+
         label = ord(answers[i]) - ord("A")
         labels.append(label)
+        example_id_list.append(eid)
 
         if train_verifier_with_sample_weighting:
             competitive_score = get_competitive_score_for_example(evidence_logits, eid, label, score_method=score_method)
@@ -1691,9 +1709,6 @@ def prepare_features_for_answer_verifier(
                 qa_pairs.append(qa_cat)
         else:
             qa_pairs = [question] * num_choices
-
-        per_example_sent_starts = sent_starts[i]
-        per_example_sent_starts.append(len(full_context))
 
         per_example_evidence_with_logits = [[] for _ in range(num_choices)]
         per_example_evidence_sent_idxs = [[] for _ in range(num_choices)]
@@ -1735,6 +1750,7 @@ def prepare_features_for_answer_verifier(
                                                                 full_context[sent_start: sent_end]])
                 context_list.append(evidence_concat)
         else:
+            per_example_evidence = []
             for j in range(num_choices):
                 optionwise_example_id = example_ids[i] + '_' + str(j)
 
@@ -1745,6 +1761,11 @@ def prepare_features_for_answer_verifier(
                 per_example_evidence_sent_idxs = sorted(per_example_evidence_logits.keys(),
                                                         key=lambda x: per_example_evidence_logits[x], reverse=True)[
                                                  : evidence_len]
+
+                evidence_start = per_example_sent_starts[per_example_evidence_sent_idxs[0]]
+                evidence_end = per_example_sent_starts[per_example_evidence_sent_idxs[0] + 1]
+                per_example_evidence.append([full_context[evidence_start: evidence_end]])
+                
                 evidence_concat = ""
                 for evidence_sent_idx in sorted(per_example_evidence_sent_idxs):
                     sent_start = per_example_sent_starts[evidence_sent_idx]
@@ -1754,9 +1775,11 @@ def prepare_features_for_answer_verifier(
                                                                 full_context[sent_start: sent_end]])
 
                 context_list.append(evidence_concat)
+
         evidence_with_logits.append(per_example_evidence_with_logits)
         processed_contexts.append(context_list)
         qa_list.append(qa_pairs)
+        evidence_list.append(per_example_evidence)
 
     first_sentences = sum(processed_contexts, [])
     second_sentences = sum(qa_list, [])
@@ -1770,9 +1793,8 @@ def prepare_features_for_answer_verifier(
     )
     tokenized_examples = {k: [v[i: i + num_choices] for i in range(0, len(v), num_choices)] for k, v in tokenized_examples.items()}
     tokenized_examples['label'] = labels
-    tokenized_examples['example_ids'] = example_ids
-    tokenized_examples['evidence_sentence'] = [[[i[1] for i in option_evi] for option_evi in evi] for evi in evidence_with_logits]
-    tokenized_examples['evidence_logit'] = [[[i[0] for i in option_evi] for option_evi in evi] for evi in evidence_with_logits]
+    tokenized_examples['example_ids'] = example_id_list
+    tokenized_examples['evidence'] = evidence_list
     if train_verifier_with_sample_weighting:
         tokenized_examples['competitive_scores'] = competitive_scores
 

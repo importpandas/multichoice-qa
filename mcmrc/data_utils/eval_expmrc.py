@@ -81,6 +81,56 @@ def evaluate_span(ground_truth_file, prediction_file):
 	evidence_f1_score = 100.0 * evidence_f1 / total_count
 	return all_f1_score, answer_f1_score, evidence_f1_score, total_count, skip_count
 
+def evaluate_multi_choice_with_negative(ground_truth_file, prediction_file, return_result_dict=False):
+	answer_f1 = 0
+	evidence_f1 = 0
+	all_f1 = 0
+	total_count = 0
+	skip_count = 0
+	result_dict = {}
+	for i in range(len(ground_truth_file["data"])):
+		sample = ground_truth_file["data"][i]
+		pid = sample['id']
+		passage = sample['article']
+		question = sample['questions']
+		options = sample['options']
+		answers = sample['answers']
+		if 'evidences' in sample:
+			evidences = sample['evidences']
+		else:
+			evidences = [''] * len(answers)
+		total_count += len(question)
+
+		for j in range(len(answers)):
+			pid_with_qid = pid + '-' + str(j)
+			if pid_with_qid not in prediction_file:
+				#sys.stderr.write('Unanswered question: {}\n'.format(pid_with_qid))
+				skip_count += 1
+				continue
+
+			answer_prediction = prediction_file[pid_with_qid]['answer']
+			evidence_prediction = prediction_file[pid_with_qid]['evidence']
+
+			temp_answer_f1 = 1 if answer_prediction == answers[j] else 0
+			if 'evidences' in sample:
+				temp_evidence_f1 = calc_f1_score(evidences[j], evidence_prediction)
+			else:
+				temp_evidence_f1 = 0
+
+			answer_f1 += temp_answer_f1
+			evidence_f1 += temp_evidence_f1
+			all_f1 += temp_answer_f1 * temp_evidence_f1
+			result_dict[pid_with_qid] = {'answer': temp_answer_f1, 'evidence': temp_evidence_f1}
+
+	all_f1_score = 100.0 * all_f1 / (total_count - skip_count)
+	answer_f1_score = 100.0 * answer_f1 / (total_count - skip_count)
+	evidence_f1_score = 100.0 * evidence_f1 / (total_count - skip_count)
+	if return_result_dict:
+		return all_f1_score, answer_f1_score, evidence_f1_score, total_count, skip_count, result_dict
+	else:
+		return all_f1_score, answer_f1_score, evidence_f1_score, total_count, skip_count
+
+
 def evaluate_multi_choice(ground_truth_file, prediction_file, return_result_dict=False):
 	answer_f1 = 0
 	evidence_f1 = 0

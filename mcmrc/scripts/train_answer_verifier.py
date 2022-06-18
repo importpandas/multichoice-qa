@@ -642,7 +642,7 @@ def main():
     if training_args.eval_answer_verifier:
 
         eval_sets = ["validation", "test"]
-        if training_args.eval_on_exp_race and data_args.dataset == "race":
+        if training_args.eval_on_exp_race and data_args.dataset in ["race", 'c3']:
             eval_sets.append("exp")
 
         for split in eval_sets:
