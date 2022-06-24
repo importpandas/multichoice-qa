@@ -1274,6 +1274,29 @@ def get_competitive_score_for_example(evidence_logits, example_id, label, predic
     return per_example_noisy_score
 
 
+def get_evidence_sent_idx(sent_starts, sent_ends, article, evidence):
+    processed_evidence = process_text(evidence)
+    span_start = article.find(processed_evidence)
+    span_end = span_start + len(processed_evidence) - 1
+
+    sent_start_idx = 0
+    sent_end_idx = 0
+    found_start = False
+    found_end = False
+    for i, (sent_start, sent_end) in enumerate(zip(sent_starts, sent_ends)):
+        # print(sent_start, sent_end)
+        if span_start >= sent_start and span_start <= sent_end:
+            sent_start_idx = i
+            found_start = True
+        if span_end >= sent_start and span_end <= sent_end:
+            sent_end_idx = i
+            found_end = True
+    if not (found_start and found_end):
+        # print(evidence)
+        return -1, -1
+    return sent_start_idx, sent_end_idx
+
+
 def prepare_features_for_bidirectional_answer_verifier(
         examples,
         train_verifier_with_option=True,
@@ -1281,6 +1304,7 @@ def prepare_features_for_bidirectional_answer_verifier(
         positive_evidence_len=1,
         add_polarity_hint=False,
         negative_evidence_len=1,
+        evidence_label=None,
         tokenizer=None,
         data_args=None):
     contexts = examples['article']
@@ -1336,6 +1360,25 @@ def prepare_features_for_bidirectional_answer_verifier(
             # 1 means positive evidence, 2 means negative evidence
             evidence_len = {1: positive_evidence_len, 2: negative_evidence_len}
             evidence_idxs = {1: [], 2: []}
+
+            if evidence_label is not None:
+                per_example_evidence_label = evidence_label[example_ids[i]]
+                if j == label and per_example_evidence_label[0] is not None:
+                    positive_evidence_label = per_example_evidence_label[0]
+                    sent_start_idx, sent_end_idx = get_evidence_sent_idx(per_example_sent_starts, per_example_sent_ends,
+                                                                         processed_context, positive_evidence_label[0])
+                    for evi_sent_idx in range(sent_start_idx, sent_end_idx + 1):
+                        evidence_idxs[1].append(evi_sent_idx)
+                        evidence_len[1] -= 1
+
+                if j != label and per_example_evidence_label[1] is not None and j in per_example_evidence_label[1]:
+                    negative_evidence_label = per_example_evidence_label[1][j]
+                    sent_start_idx, sent_end_idx = get_evidence_sent_idx(per_example_sent_starts, per_example_sent_ends,
+                                                                         processed_context, negative_evidence_label[0])
+                    for evi_sent_idx in range(sent_start_idx, sent_end_idx + 1):
+                        evidence_idxs[2].append(evi_sent_idx)
+                        evidence_len[2] -= 1
+
             already_evidence_set = []
 
             for evidence_idx_with_polarity, evidence_score in sorted_sents_by_evidential_score:
@@ -1349,6 +1392,10 @@ def prepare_features_for_bidirectional_answer_verifier(
                         already_evidence_set.append(evidence_idx)
                     continue
                 if not data_args.dynamic_evidence_len and len(evidence_idxs[polarity]) >= evidence_len[polarity]:
+                    continue
+                if evidence_idx in evidence_idxs[polarity]:
+                    if evidence_idx not in already_evidence_set:
+                        already_evidence_set.append(evidence_idx)
                     continue
                 if not data_args.dynamic_evidence_len and  \
                         len(evidence_idxs[1]) >= evidence_len[1] and len(evidence_idxs[2]) >= evidence_len[2]:

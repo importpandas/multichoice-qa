@@ -228,6 +228,12 @@ class AllTrainingArguments(TrainingArguments):
     eval_evidence_selector: bool = field(
         default=False,
         metadata={"help": "Whether to evaluate evidence reader."})
+    eval_with_golden_evidence: str = field(
+        default="none",
+        metadata={
+            "help": "Whether to evaluate with golden evidence"
+        },
+    )
     eval_selector_with_reader: bool = field(
         default=False,
         metadata={"help": "Whether to evaluate evidence selector with explicit evidence reader."})
@@ -329,6 +335,24 @@ def main():
             if training_args.local_rank in [-1, 0]:
                 logger.info("Saving exp features into cached file %s", cached_exp_features_file)
                 torch.save(datasets['exp'], cached_exp_features_file)
+
+    if training_args.eval_with_golden_evidence != 'none':
+        exp_race_file = "./exprace-negative.json"
+        evidence_label = {}
+        with open(exp_race_file) as f:
+            race_data = json.load(f)['data']
+            for data in race_data:
+                questions = data["questions"]
+                positive_evidences = data['positive_evidences']
+                negative_evidences = data['negative_evidences']
+                for i in range(len(questions)):
+                    example_id = data["id"] + '-' + str(i)
+                    if training_args.eval_with_golden_evidence == 'bidirectional':
+                        evidence_label[example_id] = (positive_evidences[i], negative_evidences[i])
+                    elif training_args.eval_with_golden_evidence == 'positive':
+                        evidence_label[example_id] = (positive_evidences[i], None)
+                    elif training_args.eval_with_golden_evidence == 'negative':
+                        evidence_label[example_id] = (None, negative_evidences[i])
 
 
     logger.info("finished loading data")
@@ -593,14 +617,26 @@ def main():
             if not training_args.train_answer_verifier and split == 'train':
                 continue
 
-            verifier_dataset = datasets[split].map(
-                partial(pprepare_features_for_answer_verifier,
-                        evidence_logits=evidence_logits[split]),
-                batched=True,
-                num_proc=data_args.preprocessing_num_workers,
-                remove_columns=column_names,
-                load_from_cache_file=not data_args.overwrite_cache,
-            )
+            if split == 'exp' and training_args.eval_with_golden_evidence:
+                verifier_dataset = datasets[split].map(
+                    partial(pprepare_features_for_answer_verifier,
+                            evidence_logits=evidence_logits[split],
+                            evidence_label=evidence_label),
+                    batched=True,
+                    num_proc=data_args.preprocessing_num_workers,
+                    remove_columns=column_names,
+
+                    load_from_cache_file=not data_args.overwrite_cache,
+                )
+            else:
+                verifier_dataset = datasets[split].map(
+                    partial(pprepare_features_for_answer_verifier,
+                            evidence_logits=evidence_logits[split]),
+                    batched=True,
+                    num_proc=data_args.preprocessing_num_workers,
+                    remove_columns=column_names,
+                    load_from_cache_file=not data_args.overwrite_cache,
+                )
 
             evidence_sentences_split = {eid: evidence_set for eid, evidence_set in
                                         zip(verifier_dataset['example_ids'], verifier_dataset['evidence'])}
